@@ -14,6 +14,8 @@ import net.minecraft.client.Minecraft;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.lwjgl.opengl.GL;
+import org.lwjgl.opengl.GL15;
+import org.lwjgl.opengl.GL33;
 import java.lang.ref.WeakReference;
 import java.util.*;
 
@@ -24,11 +26,13 @@ public final class GpuPhysics {
     private static final Map<PhysDefinition,GpuPhysModel> models=new IdentityHashMap<>();
     private static final Map<PhysDefinition,String> rejected=new WeakHashMap<>();
     private static final Set<String> logged=new HashSet<>();
+    private static final Map<PhysDefinition,Timings> timings=new WeakHashMap<>();
     private static String shaderFailure;
     private static String lastReason="experimental GPU physics disabled";
     private GpuPhysics() {}
 
     public static String getLastReason() {return lastReason;}
+    static boolean active(float[] parameters) {return instances.containsKey(parameters);}
 
     static boolean prepare(AnimatedGeoModel owner,Matrix4f root,double time,boolean paused,Object world,
                            double x,double y,double z,int fps,boolean textured,java.util.function.Function<net.minecraft.world.phys.AABB,Iterable<net.minecraft.world.phys.shapes.VoxelShape>> blockCollisions) {
@@ -43,11 +47,18 @@ public final class GpuPhysics {
         else if(!GpuCapability.isAvailable()) reason=GpuCapability.getReason();
         else if(!GL.getCapabilities().OpenGL43) reason="OpenGL 4.3 required";
         else if(!root.isFinite() || Math.abs(root.determinant())<1e-12f) reason="singular/non-finite model transform";
-        else if(!supportsDefinition(owner.getGeoModel().ysmPhysics)) reason="CPU physics active; all dependency groups require world collisions";
+        else if(!supportsDefinition(owner.getGeoModel().ysmPhysics)) reason="model has no physical joints";
         else if(!supportedScale(owner.getGeoModel().ysmPhysics,parameters,root)) reason="nonuniform/singular collision transforms require CPU physics";
         else if(requiresCpuPose(owner.getGeoModel(),gpuAffected(owner.getGeoModel().ysmPhysics),parameters)) reason="physical subtree requires a CPU pose (attachment, locator, bone query or FacingCamera)";
         else if(rejected.containsKey(owner.getGeoModel().ysmPhysics)) reason=rejected.get(owner.getGeoModel().ysmPhysics);
         if(reason!=null) {report(reason);deactivate(parameters);return false;}
+        var cost=timing(owner.getGeoModel().ysmPhysics,world,fps);
+        var existing=instances.get(parameters);
+        if(existing!=null) existing.pollTimers();
+        if(!cost.useGpu()) {
+            report(cost.cpuCount<8?"sampling CPU physics cost":"CPU physics selected by measured solve cost");
+            deactivate(parameters);return false;
+        }
         RenderSystem.assertOnRenderThread();
         try(var saved=new GpuPhysKernel.SavedState()) {
             reason=GpuPhysKernel.capabilityReason();
@@ -68,6 +79,7 @@ public final class GpuPhysics {
                 try {instance=new Instance(owner,model);}
                 catch(RuntimeException | Error e) {if(created) {models.remove(geometry.ysmPhysics);model.close();}throw e;}
                 instances.put(parameters,instance);resources.add(instance);model.users++;
+                instance.kernel.seed(owner.ysmPhysics,instance.clock);
                 owner.ysmPhysics.partition(parameters,true);
             }
             // A shadow/main/extra draw at the same simulation time must not replace
@@ -79,11 +91,7 @@ public final class GpuPhysics {
             }
             instance.touched=System.nanoTime();
             owner.ysmPhysics.update(parameters,instance.root,time,paused,world,instance.x,instance.y,instance.z,instance.blockCollisions);
-            boolean[] cpu=geometry.ysmPhysics.cpuCollisionIslands();
-            boolean anyGpu=geometry.ysmPhysics.joints.stream().anyMatch(j->!cpu[j.bone()]);
-            boolean anyCpu=geometry.ysmPhysics.joints.stream().anyMatch(j->cpu[j.bone()]);
-            lastReason=!anyGpu?"CPU collision physics active; GPU bone matrices"
-                    :anyCpu?"GPU physics active; collision dependency groups use CPU":"GPU physics active";return true;
+            lastReason="GPU physics active: integration, constraints, model and terrain contacts";return true;
         } catch(Exception | LinkageError e) {
             report("GPU physics initialization failed: "+e.getMessage());
             rejected.put(owner.getGeoModel().ysmPhysics,lastReason);deactivate(parameters);return false;
@@ -98,6 +106,8 @@ public final class GpuPhysics {
         if(instance==null) return 0;
         try(var saved=new GpuPhysKernel.SavedState()) {
             instance.draw(parameters,renderRoot,packedLight);return instance.kernel.output;
+        } catch(GpuCollisionSnapshot.Limit e) {
+            report(e.getMessage());fallback(parameters);return 0;
         } catch(Exception | LinkageError | OutOfMemoryError e) {
             report("GPU physics dispatch failed: "+e.getMessage());
             rejected.put(instance.kernel.model.definition,lastReason);fallback(parameters);return 0;
@@ -118,8 +128,18 @@ public final class GpuPhysics {
     static void deactivate(float[] parameters) {
         var instance=instances.remove(parameters);
         if(instance!=null) {
-            var owner=instance.owner.get();if(owner!=null) owner.ysmPhysics.partition(parameters,false);
-            release(instance);
+            var owner=instance.owner.get();
+            try {
+                if(owner!=null) {
+                    owner.ysmPhysics.partition(parameters,false);
+                    if(Double.isFinite(instance.drawn)) try(var saved=new GpuPhysKernel.SavedState()) {
+                        instance.kernel.handoff(owner.ysmPhysics,instance.clock);
+                    }
+                }
+            } catch(RuntimeException | OutOfMemoryError e) {
+                if(owner!=null) owner.ysmPhysics.invalidate();
+                report("GPU physics state handoff failed: "+e.getMessage());
+            } finally {release(instance);}
         }
     }
     private static void release(Instance instance) {
@@ -127,6 +147,7 @@ public final class GpuPhysics {
         var owner=instance.owner.get();
         if(owner!=null) owner.ysmPhysics.partition(owner.getMatrixData(),false);
         instance.kernel.close();
+        instance.closeTimers();
         var model=instance.kernel.model;
         if(--model.users==0) {models.remove(model.definition);model.close();}
     }
@@ -137,6 +158,7 @@ public final class GpuPhysics {
             if(entry.getValue().kernel.model.definition==model.ysmPhysics) {release(entry.getValue());iterator.remove();}
         }
         rejected.remove(model.ysmPhysics);
+        timings.remove(model.ysmPhysics);
     }
     /** Called every client tick, including world unloads and frames without any rendered players. */
     public static void tick() {
@@ -157,7 +179,56 @@ public final class GpuPhysics {
     }
     public static void shutdown() {
         for(var instance:new ArrayList<>(resources)) release(instance);
-        instances.clear();rejected.clear();GpuPhysKernel.shutdown();shaderFailure=null;
+        instances.clear();rejected.clear();timings.clear();GpuPhysKernel.shutdown();shaderFailure=null;
+    }
+    /** CPU baseline uses the actual solver at the actual cadence, never a bone-count guess. */
+    static void recordCpu(PhysDefinition definition,Object world,int fps,double time,long elapsed) {
+        if(!PhysConfig.gpuEnabled()) return;
+        timing(definition,world,fps).cpu(time,elapsed);
+    }
+    static Timings timing(PhysDefinition definition,Object world,int fps) {
+        var cost=timings.computeIfAbsent(definition,ignored->new Timings());cost.context(world,fps);return cost;
+    }
+
+    static final class Timings {
+        final long[] cpu=new long[8],gpu=new long[8];
+        final long[] preparations=new long[8],devices=new long[8],submissions=new long[8];
+        int cpuCount,gpuCount,cpuCursor,gpuCursor,fps,generation;
+        long cpuMedian,gpuMedian,rejectedCpuMedian,rejectedGpuMedian;
+        long rejectedPreparationMedian,rejectedDeviceMedian,rejectedSubmissionMedian;
+        boolean rejectedCost;
+        double cpuWarmupStart=Double.NaN;
+        WeakReference<Object> world=new WeakReference<>(null);
+        void context(Object world,int fps) {
+            if(this.world.get()!=world || this.fps!=fps) {
+                this.world=new WeakReference<>(world);this.fps=fps;cpuCount=gpuCount=cpuCursor=gpuCursor=0;
+                generation++;
+                rejectedCost=false;rejectedCpuMedian=rejectedGpuMedian=0;
+                rejectedPreparationMedian=rejectedDeviceMedian=rejectedSubmissionMedian=0;
+                cpuWarmupStart=Double.NaN;
+            }
+        }
+        void cpu(long elapsed) {cpu[cpuCursor]=elapsed;cpuCursor=(cpuCursor+1)&7;cpuCount=Math.min(8,cpuCount+1);if(cpuCount==8) cpuMedian=median(cpu);}
+        void cpu(double time,long elapsed) {
+            if(!Double.isFinite(time)) return;
+            if(!Double.isFinite(cpuWarmupStart) || time<cpuWarmupStart) cpuWarmupStart=time;
+            // Initial falling poses can be much cheaper than settled contact.
+            // Use simulation time so high display rates cannot skip warmup.
+            if(time-cpuWarmupStart>=1) cpu(elapsed);
+        }
+        void gpu(long elapsed) {gpu[gpuCursor]=elapsed;gpuCursor=(gpuCursor+1)&7;gpuCount=Math.min(8,gpuCount+1);if(gpuCount==8) gpuMedian=median(gpu);}
+        void gpu(long preparation,long device,long submission) {
+            preparations[gpuCursor]=preparation;devices[gpuCursor]=device;submissions[gpuCursor]=submission;
+            gpu(preparation+Math.max(device,submission));
+        }
+        boolean useGpu() {
+            if(!rejectedCost && cpuCount==8 && gpuCount==8 && gpuMedian>=cpuMedian*.9) {
+                rejectedCost=true;rejectedCpuMedian=cpuMedian;rejectedGpuMedian=gpuMedian;
+                rejectedPreparationMedian=median(preparations);rejectedDeviceMedian=median(devices);rejectedSubmissionMedian=median(submissions);
+            }
+            return !rejectedCost && cpuCount==8 && (gpuCount<8 || gpuMedian<cpuMedian*.9);
+        }
+        private static long median(long[] values) {long[] sorted=values.clone();Arrays.sort(sorted);return sorted[4];}
     }
     private static void report(String reason) {
         lastReason=reason;
@@ -186,21 +257,21 @@ public final class GpuPhysics {
         return false;
     }
 
-    /** World-contact islands stay on CPU; the remaining islands solve on GPU. */
+    /** Scene snapshots allow the complete island, including terrain contacts, to stay on GPU. */
     static boolean supportsDefinition(PhysDefinition definition) {
-        boolean[] cpu=definition.blockCollisionIslands();
-        return definition.joints.stream().anyMatch(joint->!cpu[joint.bone()]);
+        return definition!=null && !definition.joints.isEmpty();
     }
 
-    /** Float-only contact fitting has not passed parity for anisotropically scaled collision models. */
+    /** Contact geometry under anisotropic physical transforms remains unsupported. */
     static boolean supportedScale(PhysDefinition definition,float[] p,Matrix4f root) {
-        // A zero-scale ordinary ancestor also makes inverse(parent) undefined without contacts.
+        // Decorative branches never enter inverse(parent) or contact fitting.
+        // Their finite zero/nonuniform scales are valid for matrix generation.
         for(int i=0;i<definition.bones.size();i++) for(int component=6;component<9;component++)
-            if(!Float.isFinite(p[i*12+component]) || Math.abs(p[i*12+component])<1e-6f) return false;
-        if(definition.cubes.isEmpty()) return true;
+            if(!Float.isFinite(p[i*12+component]) || definition.physicsScale[i] && Math.abs(p[i*12+component])<1e-6f) return false;
+        if(definition.cubes.isEmpty() && definition.joints.stream().noneMatch(j->j.parameters().bc())) return true;
         var scale=root.getScale(new Vector3f());
         if(root.determinant()<=0 || !uniform(scale.x,scale.y,scale.z)) return false;
-        for(int i=0;i<definition.bones.size();i++) if(!uniform(p[i*12+6],p[i*12+7],p[i*12+8])) return false;
+        for(int i=0;i<definition.bones.size();i++) if(definition.physicsScale[i] && !uniform(p[i*12+6],p[i*12+7],p[i*12+8])) return false;
         return true;
     }
     private static boolean uniform(float x,float y,float z) {
@@ -208,12 +279,19 @@ public final class GpuPhysics {
                 && Math.abs(x-y)<1e-5f && Math.abs(x-z)<1e-5f;
     }
 
-    private static final class Instance {
+    static final class Instance {
         final WeakReference<AnimatedGeoModel> owner;
         final GpuPhysKernel kernel;
         final Matrix4f root=new Matrix4f();
         final Clock clock=new Clock();
+        final GpuCollisionSnapshot collisions;
         final Matrix4f[] animated;
+        final int[] timers=new int[4];
+        final long[] submissions=new long[4];
+        final long[] preparations=new long[4];
+        final int[] generations=new int[4];
+        int activeTimer=-1,sampleFrame;
+        long submissionStart;
         double time=Double.NaN,x,y,z,drawn=Double.NaN;
         Object world;
         int fps;
@@ -222,10 +300,40 @@ public final class GpuPhysics {
         long touched;
         Instance(AnimatedGeoModel owner,GpuPhysModel model) {
             this.owner=new WeakReference<>(owner);kernel=new GpuPhysKernel(model,1);
+            collisions=new GpuCollisionSnapshot(model.definition);
             animated=new Matrix4f[model.original.length];Arrays.setAll(animated,i->new Matrix4f());
+        }
+        void pollTimers() {
+            var cost=timings.get(kernel.model.definition);if(cost==null) return;
+            for(int i=0;i<timers.length;i++) if(timers[i]!=0
+                    && GL15.glGetQueryObjecti(timers[i],GL15.GL_QUERY_RESULT_AVAILABLE)!=0) {
+                if(generations[i]==cost.generation)
+                    cost.gpu(preparations[i],GL33.glGetQueryObjectui64(timers[i],GL15.GL_QUERY_RESULT),submissions[i]);
+                GL15.glDeleteQueries(timers[i]);timers[i]=0;
+            }
+        }
+        void beginTimer(long started) {
+            pollTimers();
+            var cost=timings.get(kernel.model.definition);
+            if(cost==null || cost.gpuCount==8 && ++sampleFrame%30!=0
+                    || GL15.glGetQueryi(GL33.GL_TIME_ELAPSED,GL15.GL_CURRENT_QUERY)!=0) return;
+            for(int i=0;i<timers.length;i++) if(timers[i]==0) {
+                timers[i]=GL15.glGenQueries();activeTimer=i;submissionStart=System.nanoTime();
+                preparations[i]=submissionStart-started;generations[i]=cost.generation;
+                GL15.glBeginQuery(GL33.GL_TIME_ELAPSED,timers[i]);return;
+            }
+        }
+        void endTimer() {
+            if(activeTimer<0) return;
+            GL15.glEndQuery(GL33.GL_TIME_ELAPSED);
+            submissions[activeTimer]=System.nanoTime()-submissionStart;activeTimer=-1;
+        }
+        void closeTimers() {
+            endTimer();for(int i=0;i<timers.length;i++) if(timers[i]!=0) {GL15.glDeleteQueries(timers[i]);timers[i]=0;}
         }
         void draw(float[] parameters,Matrix4f renderRoot,int light) {
             if(time==drawn && clock.world==world && clock.fps==fps) {kernel.matrices(parameters,renderRoot,light);return;}
+            long started=System.nanoTime();
             var definition=kernel.model.definition;
             boolean rootJump=false;
             for(int i:definition.order) {
@@ -239,10 +347,16 @@ public final class GpuPhysics {
                 if(previous!=null && previous.distanceSquared(point)>16) rootJump=true;
             }
             clock.advance(time,paused,world,x,y,z,fps,rootJump);
-            // Contact islands have already been solved on CPU; no readback or
-            // duplicate collision solve is needed when building the final matrices.
-            kernel.solve(parameters,root,renderRoot,List.of(),clock.steps,clock.reset,1f/fps,clock.velocity,light,clock.alpha());
-            drawn=time;
+            boolean sample=!paused && !clock.reset;
+            try {
+                // The displayed pose must use today's scene even between fixed steps.
+                var contacts=collisions.collect(parameters,animated,x,y,z,blockCollisions);
+                // Scene extraction precedes this instance's device work. Charge it
+                // separately instead of allowing device time to hide that CPU cost.
+                if(sample) beginTimer(started);
+                kernel.solve(parameters,root,renderRoot,contacts,clock.steps,clock.reset,1f/fps,clock.velocity,light,clock.alpha());
+                drawn=time;
+            } finally {if(sample) endTimer();}
         }
     }
 

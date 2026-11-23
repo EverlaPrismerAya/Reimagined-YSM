@@ -56,8 +56,11 @@ public final class PlayerPhysics {
                 .mul(WorldPhysicsContext.modelToWorld(renderPose));
         if(allEnabled && GpuPhysics.prepare(model,root,(entity.tickCount+partialTick)/20.0,mc.isPaused(),entity.level(),x,y,z,fps,
                 animatable.getTextureLocation()!=null,bounds->entity.level().getBlockCollisions(entity,bounds))) return;
+        long started=System.nanoTime();
         model.ysmPhysics.update(model.getMatrixData(),root,(entity.tickCount+partialTick)/20.0,mc.isPaused(),
                 entity.level(),x,y,z,bounds->entity.level().getBlockCollisions(entity,bounds));
+        if(allEnabled && model.ysmPhysics.sampledFrame())
+            GpuPhysics.recordCpu(definition,entity.level(),fps,(entity.tickCount+partialTick)/20.0,System.nanoTime()-started);
     }
 
     static boolean[] enabled(PhysDefinition definition,java.util.function.Predicate<String> animation,

@@ -8,10 +8,11 @@ import java.nio.ByteBuffer;
 /** Immutable, parent-first GPU topology. Shared by all instances of a model. */
 final class GpuPhysModel implements AutoCloseable {
     final PhysDefinition definition;
-    final int[] original, sorted;
+    final int[] original, sorted, island;
     final boolean[] affected;
     final int trees;
     final int buffer;
+    final int schedule;
     int users;
 
     GpuPhysModel(PhysDefinition definition, boolean[] glowing) {
@@ -32,7 +33,7 @@ final class GpuPhysModel implements AutoCloseable {
             }
         }
         boolean[] ends=new boolean[original.length];for(int end:definition.ends) ends[end]=true;
-        int[] island=definition.islands();
+        island=definition.islands();
         int treeCount=0;
         int[] remap=new int[original.length];java.util.Arrays.fill(remap,-1);
         for(int i:original) {
@@ -44,6 +45,28 @@ final class GpuPhysModel implements AutoCloseable {
             }
         }
         trees=Math.max(1,treeCount);
+        var traversal=new java.util.ArrayList<Integer>();
+        for(int i=0;i<trees*4;i++) traversal.add(0);
+        for(int tree=0;tree<trees;tree++) {
+            boolean[] needed=new boolean[original.length],simulation=new boolean[original.length];
+            for(int i:original) if(island[i]==tree || tree==0 && island[i]<0) {
+                for(int cursor=i;cursor>=0 && !needed[cursor];cursor=definition.bones.get(cursor).parentIdx) needed[cursor]=true;
+            }
+            for(int i:original) if(island[i]==tree && (definition.jointByBone[i]!=null || ends[i])) {
+                for(int cursor=i;cursor>=0 && !simulation[cursor];cursor=definition.bones.get(cursor).parentIdx) simulation[cursor]=true;
+            }
+            int start=traversal.size();
+            traversal.set(tree*4,start);
+            for(int i:original) if(simulation[i]) traversal.add(sorted[i]);
+            int end=traversal.size();traversal.set(tree*4+1,end);
+            if(java.util.Arrays.equals(needed,simulation)) {
+                traversal.set(tree*4+2,start);traversal.set(tree*4+3,end);
+            } else {
+                traversal.set(tree*4+2,traversal.size());
+                for(int i:original) if(needed[i]) traversal.add(sorted[i]);
+                traversal.set(tree*4+3,traversal.size());
+            }
+        }
         ByteBuffer data=MemoryUtil.memCalloc(original.length*80);
         try {
             for(int i:original) {
@@ -56,7 +79,7 @@ final class GpuPhysModel implements AutoCloseable {
                 var p=joint==null?PhysParameters.DEFAULT:joint.parameters();
                 data.putFloat(p.r()).putFloat(p.g()).putFloat(p.s()).putFloat(p.a());
                 data.putFloat(p.c()).putFloat(p.air()).putFloat(glowing[i]?1:0).putFloat(ends[i]?1:0);
-                data.putInt(island[i]).putInt(i).putInt(glowing[i]?1:0).putInt(0);
+                data.putInt(island[i]).putInt(i).putInt(glowing[i]?1:0).putInt(p.bc()?1:0);
             }
             data.flip();buffer=GL15.glGenBuffers();
             GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER,buffer);
@@ -65,7 +88,18 @@ final class GpuPhysModel implements AutoCloseable {
                 GL15.glDeleteBuffers(buffer);throw new IllegalStateException("GPU physics topology allocation failed");
             }
         } finally {MemoryUtil.memFree(data);}
+        var indices=MemoryUtil.memAllocInt(traversal.size());
+        int scheduleId=0;
+        try {
+            for(int index:traversal) indices.put(index);
+            indices.flip();scheduleId=GL15.glGenBuffers();
+            GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER,scheduleId);
+            GL15.glBufferData(GL43.GL_SHADER_STORAGE_BUFFER,indices,GL15.GL_STATIC_DRAW);
+        } catch(RuntimeException | Error e) {
+            if(scheduleId!=0) GL15.glDeleteBuffers(scheduleId);GL15.glDeleteBuffers(buffer);throw e;
+        } finally {MemoryUtil.memFree(indices);}
+        schedule=scheduleId;
     }
 
-    @Override public void close() {GL15.glDeleteBuffers(buffer);}
+    @Override public void close() {GL15.glDeleteBuffers(buffer);GL15.glDeleteBuffers(schedule);}
 }

@@ -165,8 +165,17 @@ tasks.register('checkYsmGpuPhysics', JavaExec) {
     mainClass = 'net.everla.ysmPhysLib.GpuPhysCheck'
     enableAssertions = true
     systemProperty 'ysm.physicsExample', rootProject.file('docs/examples/ysmPhys-demo').absolutePath
-    if (project.hasProperty('gpuContactPrototype')) systemProperty 'ysm.gpuContactPrototype', 'true'
+    if (project.hasProperty('physicsBenchmark')) systemProperty 'ysm.physicsBenchmark', 'true'
+    if (project.hasProperty('physicsCase')) systemProperty 'ysm.physicsCase', project.property('physicsCase')
     if (project.hasProperty('physicsModel')) systemProperty 'ysm.physicsModel', project.property('physicsModel')
+}
+
+// Explicit development-only client probe travels through the same Architectury
+// transformed module as production classes, avoiding Forge split-package modules.
+if (project.hasProperty('physicsClientProbe')) {
+    if (gradle.startParameter.taskNames.any { it.tokenize(':').last() ==~ /build|assemble|shadowJar|remapJar|publish.*/ })
+        throw new GradleException('Do not build release artifacts with -PphysicsClientProbe; run the client probe separately.')
+    tasks.named('jar') { dependsOn testClasses; from sourceSets.test.output }
 }
 
 // Optional -PofficialYsmJar points to the unmodified 2.6.5 Forge release for bytecode comparison.

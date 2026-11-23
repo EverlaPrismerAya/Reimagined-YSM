@@ -33,11 +33,17 @@ public final class PhysCollider {
     void writeGpu(java.nio.ByteBuffer out) {
         if(faces.size()>6) throw new IllegalArgumentException("GPU collider has more than six faces");
         int start=out.position();
-        put(out,min);put(out,max);out.putInt(faces.size()).putInt(0).putInt(0).putInt(0);
+        put(out,min);put(out,max);out.putInt(faces.size()).putInt(worldBlock?1:0).putInt(0).putInt(0);
         for(Face f:faces) {put(out,f.a);put(out,f.b);put(out,f.c);put(out,f.d);put(out,f.normal);}
         out.position(start+GpuPhysKernel.COLLIDER_BYTES);
     }
     private static void put(java.nio.ByteBuffer out,Vector3f v) {out.putFloat(v.x).putFloat(v.y).putFloat(v.z).putFloat(0);}
+
+    /** Inclusive broad phase: touching faces and zero-thickness surfaces remain candidates. */
+    boolean overlaps(net.minecraft.world.phys.AABB bounds) {
+        return !faces.isEmpty() && max.x>=bounds.minX && min.x<=bounds.maxX
+                && max.y>=bounds.minY && min.y<=bounds.maxY && max.z>=bounds.minZ && min.z<=bounds.maxZ;
+    }
 
     /** Capsule/convex contact, with inverse-mass weighted endpoint projection. */
     public boolean resolveSegment(Vector3f start, Vector3f end, Vector3f startVelocity, Vector3f endVelocity,

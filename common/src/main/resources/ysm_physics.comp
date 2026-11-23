@@ -16,13 +16,47 @@ layout(std430,binding=1) readonly buffer Topology { Bone bones[]; };
 layout(std430,binding=2) readonly buffer Animation { float animation[]; };
 layout(std430,binding=3) buffer State { Node nodes[]; };
 layout(std430,binding=4) readonly buffer Contacts { Collider colliders[]; };
-uniform int boneCount, treeCount, colliderCount, steps, resetState, packedLight, matrixOnly;
+layout(std430,binding=5) readonly buffer Schedule { int traversal[]; };
+uniform int boneCount, treeCount, instanceCount, colliderCount, steps, resetState, packedLight, matrixOnly;
 uniform float dt, renderAlpha;
 uniform vec3 frameVelocity;
 uniform mat4 root, renderRoot;
-int offset, stateOffset, tree;
+int offset, stateOffset, tree, traversalStart, traversalEnd, drawStart, drawEnd;
+float stepDt;
+uvec2 contactMask;
+uvec2 sweepMask;
+bool compactContacts;
+bool treeContacts;
+vec3 contactLower,contactUpper;
+int contactBone;
 int idx(int i) { return stateOffset+i; }
 bool belongs(int i) {return bones[i].meta.x==tree;}
+bool accepts(int bone,int k) {return colliders[k].info.y==0 || bones[bone].meta.w!=0;}
+bool reachableContact(int k) {
+    return accepts(contactBone,k) && all(greaterThanEqual(colliders[k].hi.xyz,contactLower))
+            && all(lessThanEqual(colliders[k].lo.xyz,contactUpper));
+}
+bool selectContacts(int bone,vec3 pivot,float reach) {
+    compactContacts=colliderCount<=64;contactMask=uvec2(0);
+    contactBone=bone;contactLower=pivot-vec3(reach);contactUpper=pivot+vec3(reach);
+    for(int k=0;k<colliderCount;k++) if(reachableContact(k)) {
+        if(!compactContacts) return true;
+        contactMask[k>>5]|=1u<<(k&31);
+    }
+    return any(notEqual(contactMask,uvec2(0)));
+}
+int nextContact(int previous) {
+    if(!compactContacts) {
+        for(int k=previous+1;k<colliderCount;k++) if(reachableContact(k)) return k;
+        return colliderCount;
+    }
+    int start=previous+1;
+    if(start>=colliderCount) return colliderCount;
+    int word=start>>5;
+    uint remaining=contactMask[word] & (0xffffffffu<<(start&31));
+    if(remaining!=0u) return word*32+findLSB(remaining);
+    return word==0 && contactMask.y!=0u?32+findLSB(contactMask.y):colliderCount;
+}
 bool finite3(vec3 v) {return !any(isnan(v)) && !any(isinf(v));}
 vec3 target(int i) {return nodes[idx(i)].target.xyz;}
 vec3 position(int i) {return nodes[idx(i)].position.xyz;}
@@ -45,6 +79,20 @@ vec4 limitRotation(vec4 q,float degrees) {
     q=normalize(q);if(q.w<0) q=-q;
     float angle=2*acos(min(1,q.w)), maximum=radians(degrees);
     return angle>maximum && angle>1e-6?qslerp(vec4(0,0,0,1),q,maximum/angle):q;
+}
+vec4 matrixQuaternion(mat3 m) {
+    float trace=m[0][0]+m[1][1]+m[2][2];
+    vec4 q;
+    if(trace>=0) {
+        float s=sqrt(max(0,1+trace))*2;
+        q=vec4((m[1][2]-m[2][1])/s,(m[2][0]-m[0][2])/s,(m[0][1]-m[1][0])/s,.25*s);
+    } else {
+        int i=m[1][1]>m[0][0]?1:0;if(m[2][2]>m[i][i]) i=2;
+        int j=(i+1)%3,k=(i+2)%3;
+        float s=sqrt(max(0,1+m[i][i]-m[j][j]-m[k][k]))*2;
+        q=vec4(0);q[i]=.25*s;q[j]=(m[j][i]+m[i][j])/s;q[k]=(m[k][i]+m[i][k])/s;q.w=(m[j][k]-m[k][j])/s;
+    }
+    return normalize(q);
 }
 vec3 qeuler(vec4 q) {
     float y=2*(q.w*q.y-q.z*q.x);
@@ -222,6 +270,22 @@ vec4 fit(int bone,vec4 fallback) {
         float sd2=sqrt((1+d)*2),inverseSd2=1/sd2;
         return normalize(vec4(cross(a,b)*inverseSd2,sd2*.5));
     }
+    int second=bones[first].links.z;
+    if(bones[second].links.z<0) {
+        // Two-vector Kabsch fit in the source/target planes. The remaining
+        // least-squares problem is one 2D rotation, not a 4x4 eigensolve.
+        vec3 c=nodes[idx(second)].source.xyz,d=nodes[idx(second)].desired.xyz;
+        vec3 sn=cross(a,c),tn=cross(b,d);
+        if(dot(sn,sn)<1e-12 || dot(tn,tn)<1e-12) return fallback;
+        vec3 sx=normalize(a),sz=normalize(sn),sy=cross(sz,sx);
+        vec3 tx=normalize(b),tz=normalize(tn),ty=cross(tz,tx);
+        float ac=dot(c,sx),as=dot(c,sy),bc=dot(d,tx),bs=dot(d,ty);
+        float cosine=length(a)*length(b)+ac*bc+as*bs,sine=ac*bs-as*bc;
+        float magnitude=length(vec2(cosine,sine));
+        if(magnitude<1e-12) return fallback;
+        cosine/=magnitude;sine/=magnitude;
+        return matrixQuaternion(mat3(tx*cosine+ty*sine,-tx*sine+ty*cosine,tz)*transpose(mat3(sx,sy,sz)));
+    }
     bool sourceNoncollinear=false,targetNoncollinear=false;mat3 h=mat3(0);
     for(int end=first;end>=0;end=bones[end].links.z) {
         vec3 s=nodes[idx(end)].source.xyz,t=nodes[idx(end)].desired.xyz;
@@ -238,7 +302,11 @@ vec4 fit(int bone,vec4 fallback) {
     mat4 v=mat4(1);
     for(int sweep=0;sweep<16;sweep++) for(int p=0;p<4;p++) for(int q=p+1;q<4;q++) {
         if(abs(n[q][p])<1e-14) continue;
-        float angle=.5*atan(2*n[q][p],n[q][q]-n[p][p]),c=cos(angle),s=sin(angle);
+        // Stable Jacobi tangent: avoids repeated GPU transcendental approximations
+        // and catastrophic eigenvector changes for almost-degenerate branch fits.
+        float tau=(n[q][q]-n[p][p])/(2*n[q][p]);
+        float t=(tau<0?-1:1)/(abs(tau)+sqrt(1+tau*tau));
+        float c=inversesqrt(1+t*t),s=t*c;
         float pp=n[p][p],qq=n[q][q],pq=n[q][p];
         n[p][p]=c*c*pp-2*s*c*pq+s*s*qq;n[q][q]=s*s*pp+2*s*c*pq+c*c*qq;n[q][p]=0;n[p][q]=0;
         for(int k=0;k<4;k++) {
@@ -250,29 +318,72 @@ vec4 fit(int bone,vec4 fallback) {
     vec4 q=normalize(vec4(v[best].yzw,v[best].x));
     return finite3(q.xyz) && !isnan(q.w) && !isinf(q.w)?q:fallback;
 }
-bool clearPose(int bone,vec4 q,mat4 parent,vec3 pivot,float radius) {
+// A convex face separating the entire rotational arc proves that collider safe,
+// even when near-zero distance would stall isotropic conservative advancement.
+bool sweepSeparated(int bone,int k,vec4 previous,vec4 correction,mat4 parent,vec3 pivot,float radius) {
+    vec4 delta=qmul(correction,vec4(-previous.xyz,previous.w));if(delta.w<0) delta=-delta;
+    float sine=length(delta.xyz),angle=2*atan(sine,max(0,delta.w));
+    vec3 axis=sine>1e-8?normalize(mat3(parent)*delta.xyz):vec3(0,1,0);
+    for(int f=0;f<colliders[k].info.x;f++) {
+        Face face=colliders[k].faces[f];
+        float anchor=dot(face.normal.xyz,pivot-face.a.xyz)-radius;
+        if(anchor<0) continue;
+        bool separated=true;
+        for(int end=bones[bone].links.y;end>=0;end=bones[end].links.z) {
+            vec3 r=mat3(parent)*qrotate(previous,nodes[idx(end)].source.xyz),axial=axis*dot(axis,r);
+            float a=dot(face.normal.xyz,r-axial),b=dot(face.normal.xyz,cross(axis,r));
+            float base=anchor+dot(face.normal.xyz,axial);
+            float minimum=min(base+a,base+a*cos(angle)+b*sin(angle));
+            if(abs(a)+abs(b)>1e-12) {
+                float turning=mod(atan(b,a)+3.14159265359,6.28318530718);
+                if(turning<=angle) minimum=min(minimum,base-length(vec2(a,b)));
+            }
+            if(minimum<0) {separated=false;break;}
+        }
+        if(separated) return true;
+    }
+    return false;
+}
+float poseClearance(int bone,vec4 q,vec4 previous,vec4 correction,mat4 parent,vec3 pivot,float radius) {
+    float nearest=3.402823e38;
     for(int end=bones[bone].links.y;end>=0;end=bones[end].links.z) {
         vec3 endpoint=pivot+mat3(parent)*qrotate(q,nodes[idx(end)].source.xyz);
-        for(int k=0;k<colliderCount;k++) {vec3 start=pivot,tip=endpoint,v0=vec3(0),v1=vec3(0);if(resolveSegment(k,start,tip,v0,v1,radius,true)) return false;}
+        for(int k=nextContact(-1);k<colliderCount;k=nextContact(k)) if(accepts(bone,k)) {
+            if(compactContacts?(sweepMask[k>>5] & (1u<<(k&31)))==0u:sweepSeparated(bone,k,previous,correction,parent,pivot,radius)) continue;
+            // A collision predicate must not inherit the resolver's anchored-pivot
+            // escape rules: an expanded sweep capsule can enclose the anchor.
+            bool inside=colliders[k].info.x==6;
+            for(int f=0;f<colliders[k].info.x;f++) {
+                Face face=colliders[k].faces[f];
+                inside=inside && dot(face.normal.xyz,pivot-face.a.xyz)<=0;
+                for(int tri=0;tri<2;tri++) {
+                    vec3 a,b;closestSegmentTriangle(pivot,endpoint,face.a.xyz,
+                            tri==0?face.b.xyz:face.c.xyz,tri==0?face.c.xyz:face.d.xyz,a,b);
+                    nearest=min(nearest,dot(a-b,a-b));
+                }
+            }
+            if(inside) return -radius-1e-6;
+        }
     }
-    return true;
+    return sqrt(nearest)-radius;
 }
 void integrate() {
-    for(int i=0;i<boneCount;i++) if(bones[i].links.w>=-1 && belongs(i)) {
+    for(int cursor=traversalStart;cursor<traversalEnd;cursor++) {int i=traversal[cursor];if(bones[i].links.w>=-1 && belongs(i)) {
         if(bones[i].links.w==-1) {nodes[idx(i)].position.xyz=target(i);nodes[idx(i)].velocity.xyz=frameVelocity;}
         vec4 p=bones[i].params;
         for(int end=bones[i].links.y;end>=0;end=bones[end].links.z) {
             vec3 acceleration=(target(end)-position(end))*p.z-vec3(0,p.y,0);
-            vec3 speed=(velocity(end)-frameVelocity)*exp(-p.x*dt)+frameVelocity+dt*acceleration;
-            speed/=1+bones[i].extra.y*length(speed)*dt;
-            vec3 point=position(end)+dt*(speed-frameVelocity);
+            vec3 speed=(velocity(end)-frameVelocity)*exp(-p.x*stepDt)+frameVelocity+stepDt*acceleration;
+            speed/=1+bones[i].extra.y*length(speed)*stepDt;
+            vec3 point=position(end)+stepDt*(speed-frameVelocity);
             if(!finite3(point) || !finite3(speed)) {point=target(end);speed=vec3(0);}
             nodes[idx(end)].position.xyz=point;nodes[idx(end)].velocity.xyz=speed;
         }
     }
+    }
 }
 void constrain() {
-    for(int i=0;i<boneCount;i++) {
+    for(int cursor=traversalStart;cursor<traversalEnd;cursor++) {int i=traversal[cursor];
         int parentIndex=bones[i].links.x;
         mat4 parent=parentIndex<0?root:nodes[idx(parentIndex)].actual;
         vec3 e=animRotation(i);
@@ -280,39 +391,52 @@ void constrain() {
         if(joint) {
             mat4 animated=parent*localMatrix(i,e),inverseParent=inverse(parent);
             vec3 pivot=(animated*vec4(bones[i].pivot.xyz,1)).xyz;
+            float reach=0;
             for(int end=bones[i].links.y;end>=0;end=bones[end].links.z) {
                 vec3 from=(animated*localMatrix(end,animRotation(end))*vec4(bones[end].pivot.xyz,1)).xyz-pivot;
+                reach=max(reach,length(from));
                 nodes[idx(end)].source=vec4(mat3(inverseParent)*from,0);
                 nodes[idx(end)].desired=vec4(mat3(inverseParent)*(position(end)-pivot),0);
             }
             vec4 previous=rotation(i),correction=limitRotation(fit(i,previous),bones[i].params.w);
             float radius=radiusOf(i,animated);
-            if(colliderCount>0 && clearPose(i,previous,parent,pivot,radius)) {
-                vec4 safe=previous;float angle=2*acos(min(1,abs(dot(previous,correction))));
-                int samples=clamp(int(ceil(angle/radians(1.0))),1,180);
-                for(int sampleIndex=1;sampleIndex<=samples;sampleIndex++) {
-                    vec4 candidate=qslerp(previous,correction,float(sampleIndex)/samples);
-                    if(!clearPose(i,candidate,parent,pivot,radius)) {
-                        vec4 blocked=candidate;
-                        for(int refinement=0;refinement<10;refinement++) {
-                            vec4 midpoint=qslerp(safe,blocked,.5);
-                            if(clearPose(i,midpoint,parent,pivot,radius)) safe=midpoint;else blocked=midpoint;
-                        }
-                        correction=safe;break;
-                    }
-                    safe=candidate;
+            bool hasContacts=selectContacts(i,pivot,reach+radius+1e-5);
+            sweepMask=contactMask;
+            if(compactContacts) for(int k=nextContact(-1);k<colliderCount;k=nextContact(k))
+                if(sweepSeparated(i,k,previous,correction,parent,pivot,radius)) sweepMask[k>>5] &= ~(1u<<(k&31));
+            float clearance=hasContacts?poseClearance(i,previous,previous,correction,parent,pivot,radius):-1;
+            if(clearance>0) {
+                vec4 safe=previous,delta=qmul(correction,vec4(-previous.xyz,previous.w));
+                float angle=2*atan(length(delta.xyz),abs(delta.w));
+                float advance=0,bound=reach*angle;
+                // Segment/triangle separation is a lower bound on travel to contact.
+                // No point travels farther than reach*angle*interval; advance inside
+                // that bound instead of sampling isolated angular poses.
+                // Exhausting the work budget stops at the last proven-clear pose.
+                for(int attempt=0;attempt<32 && advance<1 && bound>1e-6;attempt++) {
+                    if(clearance<=2e-6) break;
+                    advance=min(1,advance+clearance*.9/bound);
+                    safe=qslerp(previous,correction,advance);
+                    if(advance<1) clearance=poseClearance(i,safe,previous,correction,parent,pivot,radius);
                 }
+                if(advance<1 && bound>1e-6) {correction=safe;nodes[idx(i)].visible.w=1;}
             }
-            for(int pass=0;pass<24 && colliderCount>0;pass++) {
+            for(int pass=0;pass<24 && hasContacts;pass++) {
                 bool contact=false;
                 for(int end=bones[i].links.y;end>=0;end=bones[end].links.z) {
                     vec3 endpoint=pivot+mat3(parent)*qrotate(correction,nodes[idx(end)].source.xyz);
                     vec3 speed=velocity(end)-frameVelocity;
-                    for(int k=0;k<colliderCount;k++) {vec3 start=pivot,zero=vec3(0);bool hit=resolveSegment(k,start,endpoint,zero,speed,radius,true);contact=hit || contact;}
+                    for(int k=nextContact(-1);k<colliderCount;k=nextContact(k)) if(accepts(i,k)) {
+                        vec3 start=pivot,zero=vec3(0);
+                        if(colliders[k].info.y!=0) speed+=frameVelocity;
+                        bool hit=resolveSegment(k,start,endpoint,zero,speed,radius,true);contact=hit || contact;
+                        if(colliders[k].info.y!=0) speed-=frameVelocity;
+                    }
                     nodes[idx(end)].velocity.xyz=speed+frameVelocity;
                     nodes[idx(end)].desired=vec4(mat3(inverseParent)*(endpoint-pivot),0);
                 }
                 if(!contact) break;
+                nodes[idx(i)].visible.w=1;
                 correction=limitRotation(fit(i,correction),bones[i].params.w);
             }
             nodes[idx(i)].rotation=correction;
@@ -328,32 +452,62 @@ void constrain() {
                 if(dot(direction,direction)>1e-12) {direction=normalize(direction);speed-=dot(speed-velocity(i),direction)*direction;}
                 nodes[idx(end)].position.xyz=finite3(point)?point:target(end);nodes[idx(end)].velocity.xyz=speed;
             }
+            int first=bones[i].links.y;
+            if(treeContacts && first>=0 && bones[first].links.z>=0) {
+                // A rigid fork has one angular velocity. Independent endpoint velocities
+                // otherwise keep pumping incompatible motion into the branch fit at rest.
+                mat3 inertia=mat3(0);vec3 momentum=vec3(0);
+                for(int end=first;end>=0;end=bones[end].links.z) {
+                    vec3 arm=position(end)-position(i),speed=velocity(end)-velocity(i);
+                    inertia+=mat3(dot(arm,arm))-outerProduct(arm,arm);
+                    momentum+=cross(arm,speed);
+                }
+                float regularization=max(1e-9,(inertia[0][0]+inertia[1][1]+inertia[2][2])*1e-7);
+                vec3 omega=inverse(inertia+mat3(regularization))*momentum;
+                if(finite3(omega)) for(int end=first;end>=0;end=bones[end].links.z)
+                    nodes[idx(end)].velocity.xyz=velocity(i)+cross(omega,position(end)-position(i));
+            }
         }
     }
 }
-void collide() {
-    for(int i=0;i<boneCount;i++) if(bones[i].links.w>=-1 && belongs(i)) {
-        float radius=radiusOf(i,nodes[idx(i)].animated);
-        for(int end=bones[i].links.y;end>=0;end=bones[end].links.z) for(int k=0;k<colliderCount;k++) {
-            vec3 a=position(i),b=position(end),oldA=a,oldB=b,va=velocity(i)-frameVelocity,vb=velocity(end)-frameVelocity;
-            resolveSegment(k,a,b,va,vb,radius,bones[i].links.w==-1);
-            va+=frameVelocity;vb+=frameVelocity;
-            vec3 da=a-oldA,db=b-oldB;
-            if(bones[i].links.w>=0 && dot(da,da)<radius*radius*.01 && dot(db,db)<radius*radius*.01) {a=mix(a,oldA,.5);b=mix(b,oldB,.5);}
-            if(!finite3(b) || !finite3(vb)) {b=target(end);vb=vec3(0);}
-            nodes[idx(i)].position.xyz=a;nodes[idx(end)].position.xyz=b;nodes[idx(i)].velocity.xyz=va;nodes[idx(end)].velocity.xyz=vb;
-        }
+vec4 displayedContact(int bone,vec4 correction,mat4 parent) {
+    if(colliderCount==0) return correction;
+    mat4 animated=parent*localMatrix(bone,animRotation(bone)),inverseParent=inverse(parent);
+    vec3 pivot=(animated*vec4(bones[bone].pivot.xyz,1)).xyz;
+    float reach=0,radius=radiusOf(bone,animated);
+    for(int end=bones[bone].links.y;end>=0;end=bones[end].links.z) {
+        vec3 from=(animated*localMatrix(end,animRotation(end))*vec4(bones[end].pivot.xyz,1)).xyz-pivot;
+        reach=max(reach,length(from));nodes[idx(end)].source=vec4(mat3(inverseParent)*from,0);
     }
+    if(!selectContacts(bone,pivot,reach+radius+1e-5)) return correction;
+    for(int pass=0;pass<24;pass++) {
+        bool contact=false;
+        for(int end=bones[bone].links.y;end>=0;end=bones[end].links.z) {
+            vec3 endpoint=pivot+mat3(parent)*qrotate(correction,nodes[idx(end)].source.xyz);
+            for(int k=nextContact(-1);k<colliderCount;k=nextContact(k)) if(accepts(bone,k)) {
+                vec3 start=pivot,zero=vec3(0),speed=vec3(0);
+                contact=resolveSegment(k,start,endpoint,zero,speed,radius,true) || contact;
+            }
+            nodes[idx(end)].desired=vec4(mat3(inverseParent)*(endpoint-pivot),0);
+        }
+        if(!contact) break;
+        correction=limitRotation(fit(bone,correction),bones[bone].params.w);
+    }
+    return correction;
 }
 void writeMatrices() {
     // Rebuild even on repeated draws, whose camera pose/light may differ.
-    for(int i=0;i<boneCount;i++) {
+    for(int cursor=drawStart;cursor<drawEnd;cursor++) {int i=traversal[cursor];
         int parent=bones[i].links.x;
         vec3 e=animRotation(i);
         if(bones[i].links.w>=-1 && belongs(i)) {
             vec4 previous=nodes[idx(i)].previousRotation, current=rotation(i);
             if(dot(previous,current)<0) current=-current;
             vec4 displayed=normalize(mix(previous,current,renderAlpha));
+            // Interpolation between two safe poses need not be safe against a moving
+            // terrain plane. Project only the displayed correction; do not feed it
+            // back into persistent rotations, positions or velocities.
+            displayed=displayedContact(i,displayed,root*(parent<0?mat4(1):nodes[idx(parent)].actual));
             vec3 candidate=qeuler(normalize(qmul(displayed,qzyx(e))));if(finite3(candidate)) e=candidate;
         }
         mat4 local=localMatrix(i,e);
@@ -375,12 +529,21 @@ void writeMatrices() {
     }
 }
 void main() {
-    tree=int(gl_WorkGroupID.x)%treeCount;
-    offset=(int(gl_WorkGroupID.x)/treeCount)*boneCount;
-    stateOffset=int(gl_WorkGroupID.x)*boneCount;
+    int lane=int(gl_GlobalInvocationID.x);
+    if(lane>=instanceCount*treeCount) return;
+    tree=lane%treeCount;
+    offset=(lane/treeCount)*boneCount;
+    stateOffset=lane*boneCount;
+    traversalStart=traversal[tree*4];traversalEnd=traversal[tree*4+1];
+    drawStart=traversal[tree*4+2];drawEnd=traversal[tree*4+3];
     if(matrixOnly!=0) {writeMatrices();return;}
+    treeContacts=false;
+    for(int cursor=traversalStart;cursor<traversalEnd && !treeContacts;cursor++) {
+        int i=traversal[cursor];
+        if(belongs(i) && bones[i].links.w>=-1) for(int k=0;k<colliderCount;k++) if(accepts(i,k)) {treeContacts=true;break;}
+    }
     bool reset=resetState!=0;
-    for(int i=0;i<boneCount;i++) {
+    for(int cursor=traversalStart;cursor<traversalEnd;cursor++) {int i=traversal[cursor];
         int parent=bones[i].links.x;mat4 before=parent<0?root:nodes[idx(parent)].animated;
         mat4 animated=before*localMatrix(i,animRotation(i));nodes[idx(i)].animated=animated;
         vec3 point=(animated*vec4(bones[i].pivot.xyz,1)).xyz;
@@ -388,13 +551,25 @@ void main() {
         vec3 delta=position(i)-point;
         if(bones[i].links.w==-1 && belongs(i) && dot(delta,delta)>16) reset=true;
     }
-    if(reset) for(int i=0;i<boneCount;i++) {
+    if(reset) for(int cursor=traversalStart;cursor<traversalEnd;cursor++) {int i=traversal[cursor];
         nodes[idx(i)].position.xyz=target(i);nodes[idx(i)].velocity=vec4(0);nodes[idx(i)].rotation=vec4(0,0,0,1);
         nodes[idx(i)].previousRotation=vec4(0,0,0,1);
     }
+    if(reset && treeContacts) {
+        for(int iteration=0;iteration<8;iteration++) constrain();constrain();
+        for(int cursor=traversalStart;cursor<traversalEnd;cursor++) {int i=traversal[cursor];nodes[idx(i)].previousRotation=rotation(i);}
+    }
     if(!reset) for(int step=0;step<steps;step++) {
-        for(int i=0;i<boneCount;i++) nodes[idx(i)].previousRotation=rotation(i);
-        integrate();for(int iteration=0;iteration<8;iteration++) {constrain();collide();}constrain();
+        for(int cursor=traversalStart;cursor<traversalEnd;cursor++) {int i=traversal[cursor];nodes[idx(i)].previousRotation=rotation(i);}
+        // Low display cadences must not turn a contact step into a large explicit
+        // integration jump. Contact substeps are at most 1/120 second.
+        int substeps=treeContacts?clamp(int(ceil(dt*120)),1,120):1;
+        stepDt=dt/substeps;
+        for(int substep=0;substep<substeps;substep++) {
+            // Keep contacts on the rigid pose; free shared-node projection and
+            // displacement-derived velocities can sustain contact limit cycles.
+            integrate();for(int iteration=0;iteration<8;iteration++) constrain();constrain();
+        }
     }
     writeMatrices();
 }

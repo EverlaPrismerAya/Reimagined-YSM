@@ -14,7 +14,7 @@ import java.nio.ByteBuffer;
 import java.util.*;
 import static net.everla.ysmPhysLib.PhysCheck.*;
 
-/** Opt-in real driver check. Readbacks occur ONLY here, never in the production backend. */
+/** Opt-in real driver check. Per-frame readbacks are test-only; production reads only at CPU handoff. */
 public final class GpuPhysCheck {
     private static final Object WORLD=new Object();
     private static final Vector3f ZERO=new Vector3f();
@@ -33,6 +33,38 @@ public final class GpuPhysCheck {
             System.out.println("GPU physics verification: "+GL11.glGetString(GL11.GL_VENDOR)+" / "+GL11.glGetString(GL11.GL_RENDERER)+" / "+GL11.glGetString(GL11.GL_VERSION));
             String reason=GpuPhysKernel.capabilityReason();if(reason!=null) throw new AssertionError(reason);
             GpuPhysKernel.compile();
+            if("poseHandoff".equals(System.getProperty("ysm.physicsCase"))) {
+                var demo=loadModel(System.getProperty("ysm.physicsExample"));
+                samePoseHandoff(denseModel(demo,64,false),false);
+                samePoseHandoff(denseModel(demo,64,true),true);
+                samePoseHandoff(loadModel(Objects.requireNonNull(System.getProperty("ysm.physicsModel"))),false);return;
+            }
+            if("actualContacts".equals(System.getProperty("ysm.physicsCase"))) {
+                var actual=loadModel(Objects.requireNonNull(System.getProperty("ysm.physicsModel"),"physicsModel required"));
+                physicalContacts(actual,2);physicalContacts(actual,4);return;
+            }
+            if("handoff".equals(System.getProperty("ysm.physicsCase"))) {cpuHandoff();contactHandoff();return;}
+            if("switchCost".equals(System.getProperty("ysm.physicsCase"))) {
+                var demo=loadModel(System.getProperty("ysm.physicsExample"));
+                switchCost(demo,"demo");switchCost(denseModel(demo,64,false),"64-chain body");
+                if(System.getProperty("ysm.physicsModel")!=null) switchCost(loadModel(System.getProperty("ysm.physicsModel")),"actual");
+                return;
+            }
+            if("slide".equals(System.getProperty("ysm.physicsCase"))) {contactSliding();thinObstacleSweep();return;}
+            if("sweep".equals(System.getProperty("ysm.physicsCase"))) {thinObstacleSweep();return;}
+            if("terrain".equals(System.getProperty("ysm.physicsCase"))) {hybrid();visibilityAndState();return;}
+            if("adaptive".equals(System.getProperty("ysm.physicsCase"))) {adaptiveTiming();return;}
+            if("snapshot".equals(System.getProperty("ysm.physicsCase"))) {contactSnapshot();return;}
+            if(Boolean.getBoolean("ysm.physicsBenchmark")) {
+                com.elfmcys.yesstevemodel.NativeLibLoader.init();
+                var demo=loadModel(System.getProperty("ysm.physicsExample"));
+                for(int count:new int[]{1,16}) productionBenchmark(demo,count,false,"demo");
+                for(boolean terrain:new boolean[]{false,true})
+                    productionBenchmark(denseModel(demo,64,terrain),1,terrain,terrain?"terrain":"body");
+                if(System.getProperty("ysm.physicsModel")!=null)
+                    productionBenchmark(loadModel(System.getProperty("ysm.physicsModel")),1,false,"actual");
+                return;
+            }
             for(int fps:new int[]{1,15,30,60,120}) for(int scenario=0;scenario<7;scenario++) {
                 var fixture=fixture(scenario);
                 if(GpuPhysics.supportsDefinition(fixture.ysmPhysics)) parity(fixture,fps,scenario);
@@ -40,20 +72,26 @@ public final class GpuPhysCheck {
             }
             GeoModel demo=loadModel(System.getProperty("ysm.physicsExample"));
             sharedNativeMesh(demo);
-            if(System.getProperty("ysm.physicsModel")!=null) sharedNativeMesh(loadModel(System.getProperty("ysm.physicsModel")));
+            if(System.getProperty("ysm.physicsModel")!=null) {
+                var actual=loadModel(System.getProperty("ysm.physicsModel"));
+                sharedNativeMesh(actual);physicalContacts(actual,2);physicalContacts(actual,4);samePoseHandoff(actual,false);
+            }
             for(int fps:new int[]{1,15,30,60,120}) for(int scenario=2;scenario<=4;scenario++) parity(demo,fps,scenario);
             irisMatrices();
             queuedPhysicsMatrices();
-            if(Boolean.getBoolean("ysm.gpuContactPrototype")) {
-                for(int scenario=2;scenario<5;scenario++) parity(fixture(scenario),120,scenario,true);
-                parity(demo,120,4,true);parity(demo,120,2,true);
-                if(System.getProperty("ysm.physicsModel")!=null) parity(loadModel(System.getProperty("ysm.physicsModel")),120,4,true);
-            }
+            adaptiveTiming();
+            contactSnapshot();
+            thinObstacleSweep();
+            contactSliding();
+            cpuHandoff();
+            contactHandoff();
+            samePoseHandoff(denseModel(demo,64,false),false);
+            samePoseHandoff(denseModel(demo,64,true),true);
+            for(int scenario=2;scenario<5;scenario++) physicalContacts(fixture(scenario),scenario);
+            physicalContacts(demo,4);
             hybrid();
             visibilityAndState();
-            for(int count:new int[]{1,16,64}) benchmark(fixture(0),count);
-            if(Boolean.getBoolean("ysm.gpuContactPrototype")) for(int count:new int[]{1,16,64}) benchmark(demo,count);
-            System.out.println("PASS: enabled GPU paths: parity, branches, cadence, resets, visibility, repeated draws, CPU collision islands and GL state restoration");
+            System.out.println("PASS: GPU physical contacts, free-motion regression, cadence, lifecycle, visibility, repeated draws, terrain and GL state restoration");
         } finally {
             if(window!=0) {GpuPhysKernel.shutdown();GLFW.glfwDestroyWindow(window);}
             GLFW.glfwTerminate();GLFW.glfwSetErrorCallback(null);callback.free();
@@ -178,7 +216,7 @@ public final class GpuPhysCheck {
             float[] expectedPose=parameters(geometry),pose=parameters(geometry);partial.partition(pose,true);
             var clock=new GpuPhysics.Clock();
             try(var topology=new GpuPhysModel(d,new boolean[d.bones.size()]);var kernel=new GpuPhysKernel(topology,1)) {
-                assert topology.trees==1;
+                assert topology.trees==2;
                 for(int frame=0;frame<150;frame++) {
                     double time=frame/60.0,x=time*3;
                     double y=frame<60?Math.max(0,4*time-5*time*time):0;
@@ -188,15 +226,20 @@ public final class GpuPhysCheck {
                     full.update(expectedPose,root,time,paused,WORLD,x,y,0,bounds->List.of(floor));
                     partial.update(pose,root,time,paused,WORLD,x,y,0,bounds->List.of(floor));
                     clock.advance(time,paused,WORLD,x,y,0,fps,false);
-                    kernel.solve(pose,root,root,List.of(),clock.steps,clock.reset,1f/fps,clock.velocity,1234,clock.alpha());
+                    var snapshot=new GpuCollisionSnapshot(d);
+                    var contacts=snapshot.collect(pose,matrices(d,pose,root),x,y,0,bounds->List.of(floor));
+                    kernel.solve(pose,root,root,contacts,clock.steps,clock.reset,1f/fps,clock.velocity,1234,clock.alpha());
                     var expected=matrices(d,expectedPose,root);
                     var data=read(kernel.output,d.bones.size()*144);
                     try {
                         for(int i=0;i<d.bones.size();i++) {
                             var actual=new Matrix4f(data.asFloatBuffer().position(i*36));
-                            for(var point:List.of(d.pivot(i),d.pivot(i).add(.2f,.3f,.1f)))
+                            assert actual.isFinite();
+                            if(i>=3) for(var point:List.of(d.pivot(i),d.pivot(i).add(.2f,.3f,.1f)))
                                 assert actual.transformPosition(new Vector3f(point)).distance(expected[i].transformPosition(new Vector3f(point)))<.001f
-                                        : "hybrid matrix mismatch frame="+frame+" bone="+i;
+                                        : "unrelated GPU tree changed frame="+frame+" bone="+i;
+                            if(i==1 && frame>2) assert actual.transformPosition(d.pivot(i)).y+y>=1f/16-.002f
+                                    : "visible GPU terrain penetration: fps="+fps+" frame="+frame+" originY="+y+" tipY="+actual.transformPosition(d.pivot(i)).y;
                         }
                     } finally {MemoryUtil.memFree(data);}
                     kernel.matrices(pose,root,1234);
@@ -207,13 +250,13 @@ public final class GpuPhysCheck {
             partial.update(pose,new Matrix4f(),3,false,WORLD,0,0,0);
             for(int i=0;i<pose.length;i++) assert Math.abs(pose[i]-expectedPose[i])<1e-5 : "hybrid fallback reset mismatch";
         }
-        System.out.println("PASS: hybrid CPU terrain + GPU independent tree, ordinary descendants, sprint/jump, pause, repeated matrices and fallback");
+        System.out.println("PASS: GPU terrain + independent tree, ordinary descendants, sprint/jump, pause, repeated matrices and CPU fallback");
     }
 
     private static void clock() {
         var builder=new net.minecraftforge.common.ForgeConfigSpec.Builder();PhysConfig.define(builder,false);builder.build();
         var localBuilder=new net.minecraftforge.common.ForgeConfigSpec.Builder();PhysConfig.define(localBuilder,true);localBuilder.build();
-        assert !PhysConfig.EXPERIMENTAL_GPU.getDefault() && !PhysConfig.Local.EXPERIMENTAL_GPU.getDefault();
+        assert PhysConfig.EXPERIMENTAL_GPU.getDefault() && PhysConfig.Local.EXPERIMENTAL_GPU.getDefault();
         assert PhysConfig.EXPERIMENTAL_GPU!=PhysConfig.Local.EXPERIMENTAL_GPU;
         var clock=new GpuPhysics.Clock();
         clock.advance(0,false,WORLD,0,0,0,60,false);assert clock.reset && clock.steps==0;
@@ -226,6 +269,329 @@ public final class GpuPhysCheck {
         clock.advance(.13,false,WORLD,100,0,1,120,false);assert clock.reset;
         clock.advance(1,false,WORLD,100,0,1,120,false);assert clock.reset;
         clock.advance(.5,false,WORLD,100,0,1,120,false);assert clock.reset;
+    }
+    private static void switchCost(GeoModel geometry,String name) {
+        var d=geometry.ysmPhysics;var p=parameters(geometry);var root=new Matrix4f();
+        var contacts=contacts(d,p,root);var clock=new GpuPhysics.Clock();
+        var cpu=new PhysSimulation(d);cpu.setFrameRate(60);
+        double[] upload=new double[40],download=new double[40];
+        try(var topology=new GpuPhysModel(d,new boolean[d.bones.size()]);var kernel=new GpuPhysKernel(topology,1)) {
+            cpu.update(p,root,0,false,WORLD,0,0,0);
+            for(int sample=-10;sample<40;sample++) {
+                long start=System.nanoTime();
+                try(var saved=new GpuPhysKernel.SavedState()) {assert kernel.seed(cpu,clock);}
+                double sent=(System.nanoTime()-start)/1e6;
+                cpu.restore(p);
+                // Read back immediately after actual queued collision work, with no
+                // artificial glFinish that would hide the transfer's implicit wait.
+                clock.advance(clock.last+1.0/60,false,WORLD,0,0,0,60,false);
+                kernel.solve(p,root,root,contacts,clock.steps,false,1f/60,ZERO,1,clock.alpha());
+                start=System.nanoTime();
+                try(var saved=new GpuPhysKernel.SavedState()) {kernel.handoff(cpu,clock);}
+                double received=(System.nanoTime()-start)/1e6;
+                if(sample>=0) {upload[sample]=sent;download[sample]=received;}
+                cpu.update(p,root,clock.last,false,WORLD,0,0,0);
+            }
+        }
+        Arrays.sort(upload);Arrays.sort(download);
+        System.out.printf(Locale.ROOT,"SWITCH %s: %d bones; CPU->GPU median/p95 %.3f/%.3f ms, queued solve + GPU->CPU wait/read median/p95 %.3f/%.3f ms%n",
+                name,d.bones.size(),upload[20],upload[38],download[20],download[38]);
+    }
+    private static void contactHandoff() {
+        var geometry=model(bone("ysmPhys#bc=true,s=0,r=0,air=0,a=180,c=1@root",-1,0,0,0),bone("ysmPhysEnd@end",0,16,0,0));
+        var d=definition(geometry);var p=parameters(geometry);var floor=new net.minecraft.world.phys.AABB(-3,-2,-3,3,0,3);
+        var shape=net.minecraft.world.phys.shapes.Shapes.create(floor);
+        for(int fps:new int[]{15,60,120}) {
+            var clock=new GpuPhysics.Clock();
+            try(var topology=new GpuPhysModel(d,new boolean[d.bones.size()]);var kernel=new GpuPhysKernel(topology,1)) {
+                for(int frame=0;frame<90;frame++) {
+                    double time=frame/157.0;
+                    var root=new Matrix4f().translate(0,.5f-frame*.004f,0);
+                    clock.advance(time,false,WORLD,0,0,0,fps,false);
+                    kernel.solve(p,root,root,List.of(new PhysCollider(floor)),clock.steps,clock.reset,1f/fps,ZERO,1,clock.alpha());
+                    if(frame<20) continue;
+                    var resumed=new PhysSimulation(d);var resumedP=parameters(geometry);
+                    kernel.handoff(resumed,clock);
+                    int[] queries={0};
+                    java.util.function.Function<net.minecraft.world.phys.AABB,Iterable<net.minecraft.world.phys.shapes.VoxelShape>> source=bounds->{queries[0]++;return List.of(shape);};
+                    resumed.update(resumedP,root,time,false,WORLD,0,0,0,source);
+                    var tip=matrices(d,resumedP,root)[1].transformPosition(d.pivot(1));
+                    assert tip.y>=.0625f-.002f : "GPU -> CPU contact handoff penetrated floor: fps="+fps+" frame="+frame+" tip="+tip;
+                    int queryCount=queries[0];var drawn=resumedP.clone();
+                    resumed.restore(resumedP);
+                    resumed.update(resumedP,root,time,false,WORLD,0,0,0,source);
+                    assert queries[0]==queryCount && Arrays.equals(drawn,resumedP) : "repeated CPU fallback draw rebuilt collision snapshot";
+                    resumed.restore(resumedP);resumedP[3]=.1f;
+                    resumed.update(resumedP,root,time,false,WORLD,0,0,0,source);
+                    assert queries[0]>queryCount : "changed animation reused stale CPU fallback display";
+                    queryCount=queries[0];
+                    resumed.update(resumedP,new Matrix4f(root).translate(0,.01f,0),time,false,WORLD,0,0,0,source);
+                    assert queries[0]>queryCount : "changed root reused stale CPU fallback display";
+                    resumed.update(resumedP,new Matrix4f(root).translate(0,-.004f,0),time+1.0/157,false,WORLD,0,0,0,bounds->List.of(shape));
+                    tip=matrices(d,resumedP,new Matrix4f(root).translate(0,-.004f,0))[1].transformPosition(d.pivot(1));
+                    assert tip.y>=.0625f-.002f : "CPU continuation lost displayed ground contact: "+tip;
+                }
+            }
+        }
+        System.out.println("PASS: GPU -> CPU handoff retains nonpenetrating displayed ground contact during descent");
+    }
+    private static void cpuHandoff() {
+        for(int scenario:new int[]{1,5}) for(int fps:new int[]{15,60,120}) {
+            var geometry=fixture(scenario);var d=geometry.ysmPhysics;
+            var cpu=new PhysSimulation(d);cpu.setFrameRate(fps);
+            var p=parameters(geometry);var root=new Matrix4f().translate(2,3,-4).rotateXYZ(.2f,.3f,-.1f);
+            double time=0;
+            for(int frame=0;frame<47;frame++) {time=frame/157.0;cpu.update(p,root,time,false,WORLD,123,64,-456);}
+            var expected=matrices(d,p,root);cpu.restore(p);
+            var clock=new GpuPhysics.Clock();
+            try(var topology=new GpuPhysModel(d,new boolean[d.bones.size()]);var kernel=new GpuPhysKernel(topology,1)) {
+                assert kernel.seed(cpu,clock) : "initialized CPU state was not transferred";
+                clock.advance(time,false,WORLD,123,64,-456,fps,false);
+                assert !clock.reset && clock.steps==0 : "handoff lost clock context";
+                kernel.solve(p,root,root,List.of(),0,false,1f/fps,ZERO,1,clock.alpha());
+                var state=read(kernel.state,kernel.nodeCount*256);
+                var output=read(kernel.output,d.bones.size()*144);
+                try {
+                    for(int i=0;i<d.bones.size();i++) {
+                        var actual=new Matrix4f(output.asFloatBuffer().position(i*36));
+                        assert actual.equals(expected[i],.0001f) : "CPU -> GPU displayed pose jumped, fps="+fps+" bone="+i;
+                    }
+                    clock.advance(time+1.0/fps,false,WORLD,123,64,-456,fps,false);
+                    assert !clock.reset && clock.steps==1;
+                    kernel.solve(p,root,root,List.of(),clock.steps,false,1f/fps,ZERO,1,clock.alpha());
+                    var after=read(kernel.state,kernel.nodeCount*256);
+                    cpu.update(p,root,time+1.0/fps,false,WORLD,123,64,-456);
+                    try {
+                        assert !after.equals(state) : "transferred simulation stopped advancing";
+                        for(var joint:d.joints) for(int end:joint.outputs()) {
+                            int at=(topology.island[joint.bone()]*d.bones.size()+topology.sorted[end])*256;
+                            var position=new Vector3f(after.getFloat(at),after.getFloat(at+4),after.getFloat(at+8));
+                            assert position.distance(cpu.position(end))<.0003f : "handoff lost inertia: "+position+" / "+cpu.position(end);
+                        }
+                    } finally {MemoryUtil.memFree(after);}
+                    var resumed=new PhysSimulation(d);var resumedP=parameters(geometry);
+                    kernel.handoff(resumed,clock);
+                    resumed.update(resumedP,root,clock.last,false,WORLD,123,64,-456);
+                    var resumedMatrices=matrices(d,resumedP,root);
+                    var rendered=read(kernel.output,d.bones.size()*144);
+                    try {
+                        for(int i=0;i<d.bones.size();i++) assert resumedMatrices[i].equals(
+                                new Matrix4f(rendered.asFloatBuffer().position(i*36)),.0001f)
+                                : "GPU -> CPU displayed pose jumped, fps="+fps+" bone="+i;
+                    } finally {MemoryUtil.memFree(rendered);}
+                    resumed.update(resumedP,root,clock.last+1.0/fps,false,WORLD,123,64,-456);
+                    cpu.update(p,root,clock.last+1.0/fps,false,WORLD,123,64,-456);
+                    for(var joint:d.joints) for(int end:joint.outputs())
+                        assert resumed.position(end).distance(cpu.position(end))<.0005f : "GPU -> CPU lost inertia";
+                } finally {MemoryUtil.memFree(state);MemoryUtil.memFree(output);}
+            }
+        }
+        System.out.println("PASS: CPU <-> GPU preserves displayed pose, clock phase and inertia across branches/islands");
+    }
+
+    /** Same state and time: this tests a render handoff, not CPU/GPU trajectory equality. */
+    private static void samePoseHandoff(GeoModel geometry,boolean terrain) {
+        var d=geometry.ysmPhysics;
+        for(int fps:new int[]{15,60,120}) {
+            var cpu=new PhysSimulation(d);cpu.setFrameRate(fps);var p=parameters(geometry);
+            var root=new Matrix4f().rotateX(.2f).scale(.7f);
+            var floor=net.minecraft.world.phys.shapes.Shapes.create(new net.minecraft.world.phys.AABB(-32,-1,-32,32,0,32));
+            java.util.function.Function<net.minecraft.world.phys.AABB,Iterable<net.minecraft.world.phys.shapes.VoxelShape>> blocks=terrain?bounds->List.of(floor):null;
+            double time=0;
+            for(int frame=0;frame<80;frame++) {time=frame/157.0;cpu.update(p,root,time,false,WORLD,0,0,0,blocks);}
+            var expected=matrices(d,p,root);cpu.restore(p);
+            var snapshot=new GpuCollisionSnapshot(d);var contacts=snapshot.collect(p,matrices(d,p,root),0,0,0,blocks);
+            var clock=new GpuPhysics.Clock();
+            try(var topology=new GpuPhysModel(d,new boolean[d.bones.size()]);var kernel=new GpuPhysKernel(topology,1)) {
+                assert kernel.seed(cpu,clock);
+                clock.advance(time,false,WORLD,0,0,0,fps,false);
+                assert !clock.reset && clock.steps==0;
+                kernel.solve(p,root,root,contacts,0,false,1f/fps,ZERO,1234,clock.alpha());
+                var output=read(kernel.output,d.bones.size()*GpuPhysKernel.RESULT_BYTES);
+                float maximum=0;
+                try {
+                    for(int bone=0;bone<d.bones.size();bone++) {
+                        var actual=new Matrix4f(output.asFloatBuffer().position(bone*36));
+                        for(var point:List.of(d.pivot(bone),d.pivot(bone).add(.25f,.125f,.25f)))
+                            maximum=Math.max(maximum,expected[bone].transformPosition(new Vector3f(point)).distance(actual.transformPosition(new Vector3f(point))));
+                    }
+                } finally {MemoryUtil.memFree(output);}
+                System.out.println("SAME-POSE HANDOFF joints="+d.joints.size()+" terrain="+terrain+" fps="+fps+" maxPointDelta="+maximum);
+                assert maximum<.002f : "same-state contact handoff changed displayed geometry";
+            }
+        }
+    }
+    private static void contactSliding() {
+        for(int count:new int[]{1,33,65}) for(float tilt:new float[]{0,.7f}) for(int motion=0;motion<3;motion++) {
+            boolean departure=motion==1;
+            var geometry=model(bone("ysmPhys#bc=true,s=0,g=0,r=0,air=0,a=180,c=1@root",-1,0,0,0),bone("ysmPhysEnd@end",0,16,0,0));
+            var d=definition(geometry);var p=parameters(geometry);var basis=new Matrix4f().rotateZ(tilt);
+            var root=new Matrix4f(basis).translate(0,motion==2?.2f:.062502f,0);
+            var contacts=new ArrayList<PhysCollider>();
+            for(int i=1;i<count;i++) contacts.add(new PhysCollider(new net.minecraft.world.phys.AABB(100+i,-1,0,100.5+i,0,1)));
+            if(tilt==0) contacts.add(new PhysCollider(new net.minecraft.world.phys.AABB(-2,-1,-2,2,0,2)));
+            else contacts.add(new PhysCollider(new float[]{-2,0,-2,-2,0,2,2,0,2,2,0,-2},basis));
+            try(var topology=new GpuPhysModel(d,new boolean[d.bones.size()]);var kernel=new GpuPhysKernel(topology,1)) {
+                kernel.solve(p,root,root,contacts,0,true,1f/60,ZERO,1);
+                GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER,kernel.state);
+                var velocity=basis.transformDirection(motion==2?new Vector3f(0,-120,0):departure?new Vector3f(0,2.1f,0):new Vector3f(0,0,2.1f));
+                GL15.glBufferSubData(GL43.GL_SHADER_STORAGE_BUFFER,(long)topology.sorted[1]*256+16,new float[]{velocity.x,velocity.y,velocity.z});
+                kernel.solve(p,root,root,contacts,1,false,1f/60,ZERO,1,1);
+                var data=read(kernel.output,d.bones.size()*144);
+                try {
+                    var tip=new Matrix4f(data.asFloatBuffer().position(36)).transformPosition(d.pivot(1));
+                    new Matrix4f(basis).invert().transformPosition(tip);
+                    assert tip.y>=.0625f-1e-5 : "sliding segment entered floor: "+tip;
+                    if(motion!=2) assert departure?tip.y>.08f:tip.z>.02f : "sweep froze a clear contact slide/departure: "+tip;
+                    else assert tip.y<.15f : "inward motion failed to approach floor: "+tip;
+                } finally {MemoryUtil.memFree(data);}
+            }
+        }
+        System.out.println("PASS: contact permits tangential sliding and departure without floor penetration");
+    }
+    private static void thinObstacleSweep() {
+        for(float length:new float[]{1,4}) for(float speed:new float[]{2.1f,120}) for(int sign:new int[]{-1,1}) {
+        var geometry=model(bone("ysmPhys#bc=true,s=0,g=0,r=0,air=0,a=180,c=0@root",-1,0,0,0),bone("ysmPhysEnd@end",0,16*length,0,0));
+        var d=definition(geometry);var p=parameters(geometry);var root=new Matrix4f();
+        var contacts=List.of(new PhysCollider(new net.minecraft.world.phys.AABB(.499*length,(sign<0?-.0044:.0042)*length,-.1,.501*length,(sign<0?-.0042:.0044)*length,.1)));
+        try(var topology=new GpuPhysModel(d,new boolean[d.bones.size()]);var kernel=new GpuPhysKernel(topology,1)) {
+            kernel.solve(p,root,root,contacts,0,true,1f/60,ZERO,1);
+            // Both end poses are clear, but the swept segment crosses the thin box.
+            GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER,kernel.state);
+            GL15.glBufferSubData(GL43.GL_SHADER_STORAGE_BUFFER,(long)topology.sorted[1]*256+16,new float[]{0,sign*speed*length,0});
+            kernel.solve(p,root,root,contacts,1,false,1f/60,ZERO,1,1);
+            var data=read(kernel.output,d.bones.size()*144);
+            try {
+                var tip=new Matrix4f(data.asFloatBuffer().position(36)).transformPosition(d.pivot(1));
+                assert sign*tip.y>=0 && sign*tip.y<.009f*length : "thin obstacle tunneled between angular samples: "+tip+" length="+length+" speed="+speed;
+            } finally {MemoryUtil.memFree(data);}
+        }
+        }
+        System.out.println("PASS: thin obstacle blocks a swept segment even when both end poses are clear");
+    }
+    private static void contactSnapshot() {
+        var grouped=model(bone("ysmPhys#bc=true@a",-1,0,4,0),bone("ysmPhysEnd@a",0,16,4,0),
+                bone("ysmPhys#bc=true@b",-1,8,4,0),bone("ysmPhysEnd@b",2,24,4,0),
+                bone("ysmPhys#bc=true@far",-1,160,4,0),bone("ysmPhysEnd@far",4,176,4,0));
+        var groupedDefinition=definition(grouped);var groupedParameters=parameters(grouped);
+        var groupedQueries=new ArrayList<net.minecraft.world.phys.AABB>();
+        double origin=10000000.125;
+        var near=new net.minecraft.world.phys.AABB(-2,-1,-2,3,0,2).move(origin,0,0);
+        var far=new net.minecraft.world.phys.AABB(9,-1,-2,12,0,2).move(origin,0,0);
+        var groupedContacts=new GpuCollisionSnapshot(groupedDefinition).collect(groupedParameters,
+                matrices(groupedDefinition,groupedParameters,new Matrix4f()),origin,0,0,bounds->{
+                    groupedQueries.add(bounds);
+                    return List.of(near,far).stream().filter(bounds::intersects).map(net.minecraft.world.phys.shapes.Shapes::create).toList();
+                });
+        assert groupedQueries.size()==2 : "overlapping island queries were not merged or distant islands were bridged";
+        assert groupedContacts.size()==2 : "merged query lost a near or distant terrain collider";
+        for(double anchor:new double[]{0,.5,10}) {
+            var required=new net.minecraft.world.phys.AABB(origin+anchor,.25,0,origin+anchor,.25,0).inflate(1.06);
+            assert groupedQueries.stream().anyMatch(q->q.minX<=required.minX && q.minY<=required.minY && q.minZ<=required.minZ
+                    && q.maxX>=required.maxX && q.maxY>=required.maxY && q.maxZ>=required.maxZ) : "merge dropped rotational reach";
+        }
+        System.out.println("PASS: merged overlapping terrain queries retain full island reach, far-origin precision and distant colliders");
+        for(boolean enabled:new boolean[]{false,true}) {
+            var geometry=model(bone("ysmPhys#bc="+enabled+",s=0,r=3,air=0,a=180@root",-1,0,0,0),bone("ysmPhysEnd@end",0,16,0,0));
+            var d=definition(geometry);var p=parameters(geometry);var root=new Matrix4f().translate(0,.25f,0);
+            var floor=new net.minecraft.world.phys.AABB(-2,-1,-2,2,0,2);
+            for(int count:new int[]{1,32,33,64,65}) {
+                var contacts=new ArrayList<PhysCollider>();
+                for(int i=1;i<count;i++) contacts.add(new PhysCollider(new net.minecraft.world.phys.AABB(100+i,-1,0,100.5+i,0,1)));
+                contacts.add(new PhysCollider(floor)); // The only relevant collider is the last one.
+                try(var topology=new GpuPhysModel(d,new boolean[d.bones.size()]);var kernel=new GpuPhysKernel(topology,1)) {
+                    kernel.solve(p,root,root,contacts,0,true,1f/60,ZERO,1);
+                    for(int frame=0;frame<90;frame++) kernel.solve(p,root,root,contacts,1,false,1f/60,ZERO,1,.5f);
+                    var data=read(kernel.output,d.bones.size()*144);
+                    try {
+                        var tip=new Matrix4f(data.asFloatBuffer().position(36)).transformPosition(d.pivot(1));
+                        assert enabled?tip.y>=1f/16-.002f:tip.y<0 : "world contact mask/capacity failed: enabled="+enabled+" colliders="+count+" tip="+tip;
+                    } finally {MemoryUtil.memFree(data);}
+                }
+            }
+            double x=10000000.125,y=64,z=-10000000.125;
+            int[] queries={0};var snapshot=new GpuCollisionSnapshot(d);
+            var shape=net.minecraft.world.phys.shapes.Shapes.create(floor.move(x,y,z));
+            var contacts=snapshot.collect(p,matrices(d,p,root),x,y,z,bounds->{
+                queries[0]++;
+                assert bounds.minX<x && bounds.maxX>x+1 && bounds.minY<y && bounds.maxY>y+1 : "snapshot does not enclose rotational reach in world coordinates";
+                return List.of(shape,shape);
+            });
+            assert enabled?queries[0]==1 && contacts.size()==1:queries[0]==0 && contacts.isEmpty() : "snapshot query/dedup/bc gating failed";
+            if(enabled) {
+                var boxes=new ArrayList<net.minecraft.world.phys.AABB>();
+                for(int i=0;i<=GpuCollisionSnapshot.MAX_COLLIDERS;i++) boxes.add(new net.minecraft.world.phys.AABB(i*.001,-1,0,i*.001+.0005,0,1));
+                try {
+                    snapshot.collect(p,matrices(d,p,root),0,0,0,bounds->boxes.stream().map(net.minecraft.world.phys.shapes.Shapes::create).toList());
+                    throw new AssertionError("overflow silently truncated the terrain snapshot");
+                } catch(GpuCollisionSnapshot.Limit expected) {}
+            }
+        }
+        var geometry=fixture(2);var d=geometry.ysmPhysics;var p=parameters(geometry);
+        var snapshot=new GpuCollisionSnapshot(d);
+        assert snapshot.collect(p,matrices(d,p,new Matrix4f()),0,0,0,null).size()==1;
+        p[4*12+9]=1;
+        assert snapshot.collect(p,matrices(d,p,new Matrix4f()),0,0,0,null).isEmpty() : "hidden body collider remained active";
+        System.out.println("PASS: GPU contacts at 1/32/33/64/65 colliders, last-collider coverage, bc isolation, far-origin snapshot reach, deduplication, visibility and overflow fallback");
+    }
+    private static void adaptiveTiming() {
+        var warming=new GpuPhysics.Timings();warming.context(WORLD,60);
+        for(int i=0;i<1000;i++) warming.cpu(i/1000.0,1);
+        assert warming.cpuCount==0 && !warming.useGpu() : "high display cadence bypassed physical warmup";
+        for(int i=0;i<8;i++) warming.cpu(1+i/60.0,100);
+        assert warming.cpuCount==8 && warming.cpuMedian==100 && warming.useGpu() : "warmup contaminated the CPU baseline";
+        warming.context(WORLD,120);
+        warming.cpu(10,1);
+        assert warming.cpuCount==0 : "cadence change skipped warmup";
+        var geometry=fixture(0);var d=geometry.ysmPhysics;
+        var owner=new com.elfmcys.yesstevemodel.geckolib3.geo.animated.AnimatedGeoModel(geometry);
+        System.arraycopy(parameters(geometry),0,owner.getMatrixData(),0,d.bones.size()*12);
+        var cost=GpuPhysics.timing(d,WORLD,60);
+        assert !cost.useGpu() : "GPU selected without a CPU baseline";
+        for(int i=0;i<8;i++) cost.cpu(1); // A deliberately impossible GPU budget tests rejection on any device.
+        assert cost.useGpu() : "GPU profiling phase never starts";
+        try(var topology=new GpuPhysModel(d,new boolean[d.bones.size()])) {
+            var instance=new GpuPhysics.Instance(owner,topology);
+            try {
+                instance.fps=60;instance.world=WORLD;
+                for(int batch=0;batch<3;batch++) {
+                    for(int frame=0;frame<8;frame++) {
+                        instance.time=(batch*8+frame)/60.0;
+                        instance.draw(owner.getMatrixData(),new Matrix4f(),1);
+                        // Repeated passes must not add a simulation sample.
+                        int pending=(int)Arrays.stream(instance.timers).filter(id->id!=0).count();
+                        instance.draw(owner.getMatrixData(),new Matrix4f(),1);
+                        assert pending==Arrays.stream(instance.timers).filter(id->id!=0).count();
+                    }
+                    // A wait is allowed only in this offscreen test, never in the coordinator.
+                    GL11.glFinish();instance.pollTimers();
+                }
+                assert cost.gpuCount==8 && !cost.useGpu() : "real GPU timers did not reject an unprofitable budget";
+                long rejectedGpu=cost.rejectedGpuMedian;
+                assert cost.rejectedCpuMedian==1 && rejectedGpu>0 : "missing rejection-time costs";
+                for(int i=0;i<8;i++) cost.cpu(Long.MAX_VALUE/4);
+                assert !cost.useGpu() : "CPU fallback overhead caused another GPU trial after rejection";
+                assert cost.rejectedCpuMedian==1 && cost.rejectedGpuMedian==rejectedGpu : "rejection evidence changed after fallback";
+                instance.sampleFrame=29;
+                int external=GL15.glGenQueries();GL15.glBeginQuery(GL33.GL_TIME_ELAPSED,external);
+                try {
+                    instance.time+=1.0/60;instance.draw(owner.getMatrixData(),new Matrix4f(),1);
+                    assert GL15.glGetQueryi(GL33.GL_TIME_ELAPSED,GL15.GL_CURRENT_QUERY)==external : "profiler replaced another renderer's timer";
+                } finally {GL15.glEndQuery(GL33.GL_TIME_ELAPSED);GL15.glDeleteQueries(external);}
+                instance.sampleFrame=29;instance.time+=1.0/60;
+                instance.draw(owner.getMatrixData(),new Matrix4f(),1);
+                assert Arrays.stream(instance.timers).anyMatch(id->id!=0) : "test did not queue an old-cadence timer";
+                int generation=cost.generation;
+                cost.context(WORLD,120);
+                assert generation!=cost.generation && cost.cpuCount==0 && cost.gpuCount==0 && !cost.useGpu();
+                assert cost.rejectedCpuMedian==0 && cost.rejectedGpuMedian==0 : "old rejection evidence survived context reset";
+                GL11.glFinish();
+                instance.pollTimers();assert cost.gpuCount==0 : "old-cadence query contaminated the new baseline";
+                int[] pending=instance.timers.clone();instance.closeTimers();
+                for(int query:pending) if(query!=0) assert !GL15.glIsQuery(query) : "GPU timer leaked";
+            } finally {instance.closeTimers();instance.kernel.close();}
+        }
+        System.out.println("PASS: asynchronous GPU timing, CPU warmup, measured rejection, repeated passes, external timer preservation, cadence reset and query cleanup");
     }
     private static GeoModel fixture(int scenario) {
         // Non-parent-first import order and a plain descendant are intentional.
@@ -245,7 +611,7 @@ public final class GpuPhysCheck {
         }
         m.ysmPhysics=definition(m);return m;
     }
-    private static GeoModel loadModel(String path) throws Exception {
+    static GeoModel loadModel(String path) throws Exception {
         try(var reader=new com.elfmcys.yesstevemodel.resource.YSMFolderDeserializer(java.nio.file.Path.of(path))) {
             var geometry=reader.deserialize().mainEntity.mainModel;
             var method=com.elfmcys.yesstevemodel.resource.YSMClientMapper.class.getDeclaredMethod("buildMesh",
@@ -270,36 +636,32 @@ public final class GpuPhysCheck {
         ByteBuffer out=MemoryUtil.memAlloc(bytes);GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER,buffer);
         GL42.glMemoryBarrier(GL43.GL_BUFFER_UPDATE_BARRIER_BIT);GL15.glGetBufferSubData(GL43.GL_SHADER_STORAGE_BUFFER,0,out);return out;
     }
-    private static void parity(GeoModel geometry,int fps,int scenario) {parity(geometry,fps,scenario,false);}
-    private static void parity(GeoModel geometry,int fps,int scenario,boolean prototype) {
+    private static void parity(GeoModel geometry,int fps,int scenario) {
         var d=geometry.ysmPhysics;
         var cpu=new PhysSimulation(d);cpu.setFrameRate(fps);
         var gpuParameters=parameters(geometry);var cpuParameters=gpuParameters.clone();
-        var partial=new PhysSimulation(d);partial.setFrameRate(fps);
-        if(!prototype) partial.partition(gpuParameters,true);
         var clock=new GpuPhysics.Clock();
         float worst=0;
-        try(var topology=new GpuPhysModel(d,new boolean[d.bones.size()],prototype?d.blockCollisionIslands():d.cpuCollisionIslands());var kernel=new GpuPhysKernel(topology,1)) {
+        try(var topology=new GpuPhysModel(d,new boolean[d.bones.size()]);var kernel=new GpuPhysKernel(topology,1)) {
             for(int frame=0;frame<100;frame++) {
                 Matrix4f root=new Matrix4f();
                 if(scenario>=3) root.rotateX(.4f).scale(.7f);
                 if(scenario==6) root.scale(1,1.2f,.9f);
                 cpu.restore(cpuParameters);
-                if(!prototype) partial.restore(gpuParameters);
-                if(!prototype) for(var cube:d.cubes) {
+                for(var cube:d.cubes) {
                     int at=cube.bone()*12;
                     cpuParameters[at+2]=gpuParameters[at+2]=.15f*(float)Math.sin(frame*.1);
                     cpuParameters[at+9]=gpuParameters[at+9]=frame>=20 && frame<27?1:0;
                 }
                 // Pausing, repeated drawing, teleports, and backwards movement.
                 boolean paused=frame>=30 && frame<35;double time=frame/60.0,z=scenario>=4?-4*time:0;
-                if(!prototype && scenario>=4 && frame>50) z=-4*(100-frame)/60.0;
+                if(scenario>=4 && frame>50) z=-4*(100-frame)/60.0;
                 if(frame>=70) z+=100;
                 Object world=frame<80?WORLD:geometry;
                 clock.advance(time,paused,world,0,0,z,fps,false);
                 cpu.update(cpuParameters,root,time,paused,world,0,0,z);
-                if(!prototype) partial.update(gpuParameters,root,time,paused,world,0,0,z);
-                kernel.solve(gpuParameters,root,root,prototype?contacts(d,gpuParameters,root):List.of(),clock.steps,clock.reset,1f/fps,clock.velocity,1234,clock.alpha());
+                var contacts=new GpuCollisionSnapshot(d).collect(gpuParameters,matrices(d,gpuParameters,root),0,0,z,null);
+                kernel.solve(gpuParameters,root,root,contacts,clock.steps,clock.reset,1f/fps,clock.velocity,1234,clock.alpha());
                 var expected=matrices(d,cpuParameters,root);
                 ByteBuffer output=read(kernel.output,d.bones.size()*GpuPhysKernel.RESULT_BYTES);
                 try {
@@ -310,7 +672,9 @@ public final class GpuPhysCheck {
                         Vector3f p=actual.transformPosition(d.pivot(i)),q=expected[i].transformPosition(d.pivot(i));
                         assert p.isFinite() : "non-finite GPU pose";
                         float error=p.distance(q);worst=Math.max(worst,error);
-                        assert error<(d.cubes.isEmpty()?.001f:.015f) : "GPU pose mismatch fps="+fps+" scenario="+scenario+" frame="+frame+" bone="+i+" error="+error+" actual="+p+" expected="+q;
+                        // Unconstrained motion remains a useful regression oracle. Contact solutions
+                        // are checked against geometry/constraints below, not an arbitrary CPU pose.
+                        if(d.cubes.isEmpty()) assert error<.001f : "GPU pose mismatch fps="+fps+" scenario="+scenario+" frame="+frame+" bone="+i+" error="+error;
                         assert output.getInt(i*144+128)==1234;
                     }
                     for(var joint:d.joints) for(int end:joint.outputs()) {
@@ -330,7 +694,71 @@ public final class GpuPhysCheck {
                 }
             }
         }
-        System.out.printf(Locale.ROOT,"GPU parity: %d joints, %d cubes, %d Hz, scenario %d, max pivot error %.6f blocks%n",d.joints.size(),d.cubes.size(),fps,scenario,worst);
+        System.out.printf(Locale.ROOT,"%s: %d joints, %d cubes, %d Hz, scenario %d, max CPU trajectory difference %.6f blocks%n",d.cubes.isEmpty()?"FREE MOTION REGRESSION":"CONTACT TRAJECTORY (diagnostic only)",d.joints.size(),d.cubes.size(),fps,scenario,worst);
+    }
+    /** Acceptance is expressed in world geometry, independently of the CPU trajectory. */
+    private static void physicalContacts(GeoModel geometry,int scenario) {
+        var d=geometry.ysmPhysics;
+        boolean stable=true;
+        for(int fps:new int[]{60,120,15}) {
+            float[] p=parameters(geometry);
+            var root=new Matrix4f();if(scenario>=3) root.rotateX(.4f).scale(.7f);
+            var animated=matrices(d,p,root);
+            var snapshot=new GpuCollisionSnapshot(d);
+            var contacts=snapshot.collect(p,animated,0,0,0,null);
+            Vector3f[] previous=new Vector3f[d.bones.size()];
+            Vector3f[] previousState=new Vector3f[d.bones.size()];
+            float lateMovement=0,lateStateMovement=0;
+            try(var topology=new GpuPhysModel(d,new boolean[d.bones.size()]);var kernel=new GpuPhysKernel(topology,1)) {
+                kernel.solve(p,root,root,contacts,0,true,1f/fps,ZERO,1234);
+                for(int frame=1;frame<=fps*15;frame++) {
+                    // Translate the reference frame, then allow enough stationary time to settle.
+                    var velocity=frame<fps*2?new Vector3f(0,0,scenario>=4?-4:0):ZERO;
+                    kernel.solve(p,root,root,contacts,1,false,1f/fps,velocity,1234);
+                    var out=read(kernel.output,d.bones.size()*GpuPhysKernel.RESULT_BYTES);
+                    try {
+                        Matrix4f[] actual=new Matrix4f[d.bones.size()];
+                        for(int i=0;i<actual.length;i++) {
+                            actual[i]=new Matrix4f(out.asFloatBuffer().position(i*36));
+                            assert actual[i].isFinite() : "non-finite GPU matrix";
+                        }
+                        for(var joint:d.joints) {
+                            Vector3f scale=animated[joint.bone()].getScale(new Vector3f());
+                            float radius=joint.parameters().c()/16f*Math.max(scale.x,Math.max(scale.y,scale.z));
+                            var anchor=actual[joint.bone()].transformPosition(d.pivot(joint.bone()));
+                            for(int end:joint.outputs()) {
+                                var tip=actual[end].transformPosition(d.pivot(end));
+                                float length=animated[end].transformPosition(d.pivot(end)).distance(animated[joint.bone()].transformPosition(d.pivot(joint.bone())));
+                                assert Math.abs(tip.distance(anchor)-length)<.001f : "GPU segment length constraint failed";
+                                if(frame>fps*12 && previous[end]!=null) lateMovement=Math.max(lateMovement,previous[end].distance(tip));
+                                previous[end]=tip;
+                                if(frame>4) for(var collider:contacts)
+                                    assert !collider.resolveSegment(new Vector3f(anchor),new Vector3f(tip),new Vector3f(),new Vector3f(),Math.max(0,radius-.002f),true)
+                                            : "GPU visible penetration > .002 blocks: fps="+fps+" frame="+frame+" joint="+d.bones.get(joint.bone()).getName()+" tip="+tip;
+                            }
+                            int sorted=d.islands()[joint.bone()]*d.bones.size()+topology.sorted[joint.bone()];
+                            // Test reads every pose; production only reads on GPU -> CPU handoff.
+                            var state=read(kernel.state,kernel.nodeCount*GpuPhysKernel.NODE_BYTES);
+                            try {
+                                for(int end:joint.outputs()) {
+                                    int at=(topology.island[end]*d.bones.size()+topology.sorted[end])*GpuPhysKernel.NODE_BYTES;
+                                    var point=new Vector3f(state.getFloat(at),state.getFloat(at+4),state.getFloat(at+8));
+                                    if(frame>fps*12 && previousState[end]!=null) lateStateMovement=Math.max(lateStateMovement,point.distance(previousState[end]));
+                                    previousState[end]=point;
+                                }
+                                var rotation=new org.joml.Quaternionf(state.getFloat(sorted*256+48),state.getFloat(sorted*256+52),state.getFloat(sorted*256+56),state.getFloat(sorted*256+60));
+                                assert rotation.isFinite() && Math.abs(rotation.lengthSquared()-1)<.001 : "GPU correction is not a unit quaternion";
+                                assert 2*Math.acos(Math.min(1,Math.abs(rotation.w)))<=Math.toRadians(joint.parameters().a())+.001 : "GPU angular limit failed";
+                            } finally {MemoryUtil.memFree(state);}
+                        }
+                    } finally {MemoryUtil.memFree(out);}
+                }
+            }
+            // 1/16 of one model pixel (16 pixels/block), below a visible pixel step.
+            stable &= lateMovement<1f/256;
+            System.out.printf(Locale.ROOT,"PHYSICAL: %d joints / %d colliders, %d Hz, scenario %d; penetration < .002 blocks, length < .001, late movement %.6f, state movement %.6f%n",d.joints.size(),contacts.size(),fps,scenario,lateMovement,lateStateMovement);
+        }
+        assert stable : "stationary GPU contact moves more than 1/16 model pixel/frame; see cadence results";
     }
     private static void visibilityAndState() throws Exception {
         var contactModel=fixture(3);
@@ -338,16 +766,28 @@ public final class GpuPhysCheck {
         assert !GpuPhysics.supportedScale(contactModel.ysmPhysics,parameters(contactModel),new Matrix4f().scale(.7f,1.2f,.9f));
         assert GpuPhysics.supportedScale(contactModel.ysmPhysics,parameters(contactModel),new Matrix4f().scale(.7f));
         assert !GpuPhysics.supportedScale(contactModel.ysmPhysics,parameters(contactModel),new Matrix4f().scale(-1,1,1));
+        var scalePose=parameters(contactModel);
+        scalePose[3*12+6]=0;scalePose[3*12+7]=2;
+        assert GpuPhysics.supportedScale(contactModel.ysmPhysics,scalePose,new Matrix4f()) : "decorative scale rejected physical solver";
+        scalePose[1*12+6]=0;
+        assert !GpuPhysics.supportedScale(contactModel.ysmPhysics,scalePose,new Matrix4f()) : "singular physical ancestor accepted";
+        scalePose=parameters(contactModel);scalePose[4*12+7]=2;
+        assert !GpuPhysics.supportedScale(contactModel.ysmPhysics,scalePose,new Matrix4f()) : "anisotropic collider accepted";
         boolean[] contacts=contactModel.ysmPhysics.cpuCollisionIslands();
-        for(var joint:contactModel.ysmPhysics.joints) assert contacts[joint.bone()] : "unvalidated GPU body solver enabled";
+        for(var joint:contactModel.ysmPhysics.joints) assert !contacts[joint.bone()] : "GPU contacts silently run on CPU";
         var terrainOnly=model(bone("ysmPhys#bc=true@root",-1,0,0,0),bone("ysmPhysEnd@end",0,16,0,0));
-        assert !GpuPhysics.supportsDefinition(definition(terrainOnly)) : "all-terrain model must report CPU physics";
+        assert GpuPhysics.supportsDefinition(definition(terrainOnly)) : "terrain model must support GPU physics";
         var geometry=fixture(0);var d=geometry.ysmPhysics;float[] p=parameters(geometry);
+        p[3*12+6]=0;p[3*12+7]=2;
         p[2*12+9]=1; // hide self, keep ordinary child visible
         try(var topology=new GpuPhysModel(d,new boolean[d.bones.size()]);var kernel=new GpuPhysKernel(topology,1)) {
             kernel.solve(p,new Matrix4f(),new Matrix4f(),List.of(),0,true,1f/60,ZERO,1);
             ByteBuffer out=read(kernel.output,d.bones.size()*144);
-            try {assert out.getInt(2*144+132)==1 && out.getInt(3*144+132)==0 && out.getInt(132)==1;}
+            try {
+                assert out.getInt(2*144+132)==1 && out.getInt(3*144+132)==1 && out.getInt(132)==1;
+                for(int bone=0;bone<d.bones.size();bone++) for(int component=0;component<32;component++)
+                    assert Float.isFinite(out.getFloat(bone*144+component*4)) : "decorative zero scale produced a non-finite matrix";
+            }
             finally {MemoryUtil.memFree(out);}
             int sentinel=GL15.glGenBuffers();GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER,sentinel);GL15.glBufferData(GL43.GL_SHADER_STORAGE_BUFFER,4096,GL15.GL_DYNAMIC_COPY);
             int alignment=GL11.glGetInteger(GL43.GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT);
@@ -457,49 +897,103 @@ public final class GpuPhysCheck {
         System.out.println("PASS: 120 queued GPU physics matrix/consumer draws, two instances and repeated passes, no intermediate readbacks");
     }
 
-    private static void benchmark(GeoModel geometry,int count) throws Exception {
-        var d=geometry.ysmPhysics;float[] p=parameters(geometry);var root=new Matrix4f();var contacts=contacts(d,p,root);
-        int drawProgram=ShaderUtil.linkProgram(ShaderUtil.compileShader(GL20.GL_VERTEX_SHADER,"""
-                #version 430 core
-                struct Bone {mat4 transform;mat4 normal;ivec4 flags;};
-                layout(std430,binding=0) readonly buffer Bones {Bone bones[];};
-                void main(){gl_Position=bones[gl_VertexID].transform*vec4(0,0,0,1);gl_PointSize=1;}
-                ""","physics benchmark consumer"),ShaderUtil.compileShader(GL20.GL_FRAGMENT_SHADER,"""
-                #version 430 core
-                out vec4 color;void main(){color=vec4(1);}
-                ""","physics benchmark fragment"));
-        int vao=GL30.glGenVertexArrays();GL30.glBindVertexArray(vao);
-        var bean=(com.sun.management.ThreadMXBean)java.lang.management.ManagementFactory.getThreadMXBean();
-        bean.setThreadAllocatedMemoryEnabled(true);
-        try(var topology=new GpuPhysModel(d,new boolean[d.bones.size()],d.blockCollisionIslands());var kernel=new GpuPhysKernel(topology,count)) {
-            PhysSimulation[] cpu=new PhysSimulation[count];float[][] poses=new float[count][];
-            for(int i=0;i<count;i++) {cpu[i]=new PhysSimulation(d);cpu[i].setFrameRate(60);poses[i]=p.clone();}
-            for(int frame=0;frame<30;frame++) for(int i=0;i<count;i++) cpu[i].update(poses[i],root,frame/60.0,false,WORLD,0,0,0);
-            long allocated=bean.getThreadAllocatedBytes(Thread.currentThread().getId()),start=System.nanoTime();
-            for(int frame=30;frame<60;frame++) for(int i=0;i<count;i++) {cpu[i].update(poses[i],root,frame/60.0,false,WORLD,0,0,0);matrices(d,poses[i],root);}
-            double cpuMs=(System.nanoTime()-start)/30e6,kb=(bean.getThreadAllocatedBytes(Thread.currentThread().getId())-allocated)/30.0/1024;
-            int[] queries=new int[30];for(int i=0;i<queries.length;i++) queries[i]=GL15.glGenQueries();
-            kernel.solve(p,root,root,contacts,0,true,1f/60,ZERO,0);
-            for(int frame=0;frame<10;frame++) kernel.solve(p,root,root,contacts,1,false,1f/60,ZERO,0);
-            GL11.glFinish();start=System.nanoTime();
-            for(int frame=0;frame<queries.length;frame++) {
-                GL15.glBeginQuery(GL33.GL_TIME_ELAPSED,queries[frame]);
-                kernel.solve(p,root,root,contacts,1,false,1f/60,ZERO,0);
-                GL20.glUseProgram(drawProgram);GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,0,kernel.output);
-                GL11.glDrawArrays(GL11.GL_POINTS,0,d.bones.size()*count);
-                GL15.glEndQuery(GL33.GL_TIME_ELAPSED);
+    static GeoModel denseModel(GeoModel source,int count,boolean terrain) {
+        var bones=new ArrayList<com.elfmcys.yesstevemodel.geckolib3.geo.render.built.GeoBone>();
+        for(int i=0;i<count;i++) {
+            bones.add(bone("ysmPhys#bc="+terrain+"@root"+i,-1,i*2,4,0));
+            bones.add(bone("ysmPhysEnd@end"+i,i*2,i*2+16,4,0));
+        }
+        bones.add(bone("ysmPhysC@body",-1,0,0,0));
+        var geometry=model(bones.toArray(com.elfmcys.yesstevemodel.geckolib3.geo.render.built.GeoBone[]::new));
+        var visual=source.bakedBones.stream().filter(b->!b.cubes.isEmpty()).findFirst().orElseThrow().cubes;
+        for(int i=0;i<geometry.bakedBones.size();i++) {
+            var baked=geometry.bakedBones.get(i);var bone=bones.get(i);
+            baked.pivotX=bone.getPivotX();baked.pivotY=bone.getPivotY();baked.pivotZ=bone.getPivotZ();
+            if(i%2==0 && i<count*2) baked.cubes.addAll(visual);
+        }
+        if(!terrain) for(int body=0;body<16;body++) {
+            float[] faces=cube();for(int i=0;i<faces.length;i+=3) {
+                faces[i]=faces[i]*.15f+body*.5f;faces[i+1]=faces[i+1]*.15f-.3f;faces[i+2]*=.15f;
             }
-            double submission=(System.nanoTime()-start)/30e6;GL11.glFlush();
-            // Read availability first: querying an unavailable result would serialize every frame.
-            long deadline=System.nanoTime()+15_000_000_000L;
-            while(GL15.glGetQueryObjecti(queries[queries.length-1],GL15.GL_QUERY_RESULT_AVAILABLE)==0) {
-                if(System.nanoTime()>deadline) throw new AssertionError("GPU timer query timed out");
-                Thread.onSpinWait();
-            }
-            double[] samples=new double[queries.length];
-            for(int i=0;i<queries.length;i++) {samples[i]=GL33.glGetQueryObjectui64(queries[i],GL15.GL_QUERY_RESULT)/1e6;GL15.glDeleteQueries(queries[i]);}
-            Arrays.sort(samples);
-            System.out.printf(Locale.ROOT,"BENCH %d instances x %d joints / %d cubes: CPU solve+matrices %.3f ms, alloc %.1f KiB/frame; batched GPU upload+solve+matrices+consumer draw median %.3f ms, CPU submission %.3f ms%n",count,d.joints.size(),d.cubes.size(),cpuMs,kb,samples[15],submission);
-        } finally {GL20.glUseProgram(0);GL20.glDeleteProgram(drawProgram);GL30.glBindVertexArray(0);GL30.glDeleteVertexArrays(vao);}
+            geometry.bakedBones.get(count*2).physicsFaces.add(faces);
+        }
+        geometry.ysmPhysics=definition(geometry);return geometry;
     }
+
+    /** Sequential instance dispatches, real native matrices/SSBO uploads and production skin shader. */
+    private static void productionBenchmark(GeoModel geometry,int count,boolean terrain,String name) throws Exception {
+        var d=geometry.ysmPhysics;
+        var mesh=net.everla.reimaginedysm.gpu.GpuRenderPath.getOrBuildMesh(geometry);
+        assert mesh!=null;
+        int draw=ShaderUtil.linkProgram(ShaderUtil.compileShaderFromResource(GL20.GL_VERTEX_SHADER,"/bone_skin.vsh"),
+                ShaderUtil.compileShader(GL20.GL_FRAGMENT_SHADER,"#version 430 core\nout vec4 color;void main(){color=vec4(1);}","benchmark fragment"));
+        GL20.glUseProgram(draw);GL20.glUniformMatrix4fv(GL20.glGetUniformLocation(draw,"u_proj"),false,new Matrix4f().get(new float[16]));
+        var root=new Matrix4f();float[] rootFloats=root.get(new float[16]),normal=new org.joml.Matrix3f().get(new float[9]);
+        var floor=net.minecraft.world.phys.shapes.Shapes.create(new net.minecraft.world.phys.AABB(-32,-1,-32,32,0,32));
+        java.util.function.Function<net.minecraft.world.phys.AABB,Iterable<net.minecraft.world.phys.shapes.VoxelShape>> blocks=terrain?bounds->List.of(floor):null;
+        var bean=(com.sun.management.ThreadMXBean)java.lang.management.ManagementFactory.getThreadMXBean();bean.setThreadAllocatedMemoryEnabled(true);
+        var visibility=net.everla.reimaginedysm.gpu.GpuRenderPath.class.getDeclaredMethod("updateBoneVisibility",List.class,float[].class,ByteBuffer.class);visibility.setAccessible(true);
+        try(var topology=new GpuPhysModel(d,new boolean[d.bones.size()])) {
+            for(int backend=0;backend<3;backend++) {
+                boolean gpu=backend==1,returned=backend==2;
+                var kernels=new GpuPhysKernel[count];var cpu=new PhysSimulation[count];
+                var snapshots=new GpuCollisionSnapshot[count];float[][] poses=new float[count][];
+                int frames=90;int[] queries=new int[frames];
+                try {
+                    for(int i=0;i<count;i++) {
+                        poses[i]=parameters(geometry);cpu[i]=new PhysSimulation(d);cpu[i].setFrameRate(60);
+                        if(gpu) {kernels[i]=new GpuPhysKernel(topology,1);snapshots[i]=new GpuCollisionSnapshot(d);}
+                        if(returned) try(var seed=new GpuPhysKernel(topology,1)) {
+                            var clock=new GpuPhysics.Clock();clock.advance(0,false,WORLD,0,0,0,60,false);
+                            seed.solve(poses[i],root,root,contacts(d,poses[i],root),0,true,1f/60,ZERO,1234);
+                            seed.handoff(cpu[i],clock);
+                        }
+                    }
+                    GL11.glEnable(GL30.GL_RASTERIZER_DISCARD);
+                    long started=0,allocated=0;double submit=0,total=0;
+                    for(int frame=0;frame<60+frames;frame++) {
+                        if(frame==60) {GL11.glFinish();started=System.nanoTime();allocated=bean.getThreadAllocatedBytes(Thread.currentThread().getId());}
+                        int q=frame-60;
+                        if(q>=0) {queries[q]=GL15.glGenQueries();GL15.glBeginQuery(GL33.GL_TIME_ELAPSED,queries[q]);}
+                        for(int i=0;i<count;i++) {
+                            int buffer;
+                            if(gpu) {
+                                // Scene extraction, allocation, both state-save scopes and the draw's
+                                // upload/dispatch are timed. No artificial multi-instance batch.
+                                try(var saved=new GpuPhysKernel.SavedState()) {GpuPhysKernel.compile();}
+                                var contacts=snapshots[i].collect(poses[i],matrices(d,poses[i],root),0,0,0,blocks);
+                                try(var saved=new GpuPhysKernel.SavedState()) {
+                                    kernels[i].solve(poses[i],root,root,contacts,frame==0?0:1,frame==0,1f/60,ZERO,1234);
+                                }
+                                buffer=kernels[i].output;
+                            } else {
+                                cpu[i].update(poses[i],root,frame/60.0,false,WORLD,0,0,0,blocks);
+                                var pose=mesh.pose(poses[i]);pose.boneBuffer.clear();
+                                GeoModel.nComputeBoneMatrices(mesh.pointer,rootFloats,normal,PlayerPhysics.hideEndpoints(geometry,poses[i]),1234,pose.boneBuffer);
+                                visibility.invoke(null,geometry.bakedBones,poses[i],pose.boneBuffer);
+                                pose.uploadBones();buffer=pose.boneSsbo;
+                            }
+                            GL20.glUseProgram(draw);GL30.glBindVertexArray(mesh.vao);GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,0,buffer);
+                            GL11.glDrawElements(GL11.GL_TRIANGLES,mesh.indexCount,GL11.GL_UNSIGNED_INT,0L);
+                        }
+                        if(q>=0) GL15.glEndQuery(GL33.GL_TIME_ELAPSED);
+                    }
+                    submit=(System.nanoTime()-started)/frames/1e6;
+                    double kib=(bean.getThreadAllocatedBytes(Thread.currentThread().getId())-allocated)/frames/1024.0;
+                    GL11.glFinish();total=(System.nanoTime()-started)/frames/1e6;
+                    double[] times=new double[frames];for(int i=0;i<frames;i++) times[i]=GL33.glGetQueryObjectui64(queries[i],GL15.GL_QUERY_RESULT)/1e6;
+                    Arrays.sort(times);
+                    System.out.printf(Locale.ROOT,"PRODUCTION %s %s: %d sequential instances x %d joints / %d body cubes, native mesh %d vertices; wall %.3f ms/frame, CPU submission %.3f ms/frame, GPU median/p95 %.3f/%.3f ms, Java allocation %.1f KiB/frame%n",
+                            name,gpu?"GPU":returned?"CPU-returned":"CPU",count,d.joints.size(),d.cubes.size(),mesh.vertexCount,total,submit,times[frames/2],times[(int)(frames*.95)],kib);
+                } finally {
+                    for(var kernel:kernels) if(kernel!=null) kernel.close();
+                    for(int query:queries) if(query!=0) GL15.glDeleteQueries(query);
+                }
+            }
+        } finally {
+            GL11.glDisable(GL30.GL_RASTERIZER_DISCARD);GL20.glUseProgram(0);GL30.glBindVertexArray(0);
+            GL20.glDeleteProgram(draw);net.everla.reimaginedysm.gpu.GpuRenderPath.disposeMesh(geometry);
+        }
+    }
+
 }

@@ -146,7 +146,7 @@ public final class PhysCheck {
         for(boolean enabled:new boolean[]{false,true}) for(double origin:new double[]{0,10000000.125,-10000000.125}) {
             var m=model(bone("ysmPhys#bc="+enabled+",s=0,r=3,air=0,a=180@root",-1,0,0,0),bone("ysmPhysEnd@end",0,16,0,0));
             var d=definition(m);var sim=new PhysSimulation(d);sim.setFrameRate(60);var p=parameters(m);
-            assert GpuPhysics.supportsDefinition(d)!=enabled : "world collision bypassed GPU fallback";
+            assert GpuPhysics.supportsDefinition(d) : "terrain topology must be supported";
             var root=new Matrix4f().translate(0,.25f,0);
             var floor=new net.minecraft.world.phys.AABB(-2,-1,-2,2,0,2);
             var shape=net.minecraft.world.phys.shapes.Shapes.create(floor.move(origin,64,origin));
@@ -380,7 +380,11 @@ public final class PhysCheck {
             var m=single("g=9.8,s=20,a=90");var p=parameters(m);
             var sim=new PhysSimulation(definition(m));sim.setFrameRate(fps);
             sim.update(p,new Matrix4f(),0,false,WORLD,0,0,0);
+            assert !sim.sampledFrame() : "initial reset entered cost calibration";
             sim.update(p,new Matrix4f(),1.0/240,false,WORLD,0,0,0);
+            assert sim.sampledFrame() && sim.stepsInUpdate()==0 : "display-only frame missing from cost calibration";
+            sim.update(p,new Matrix4f(),1.0/240,false,WORLD,0,0,0);
+            assert !sim.sampledFrame() : "repeated pass entered cost calibration";
             assert sim.position(1).distance(new Vector3f(1,0,0))<1e-6 : "stepped before configured cadence";
             for(int frame=2;frame<=1200;frame++) sim.update(p,new Matrix4f(),frame/240.0,false,WORLD,0,0,0);
             assert sim.position(1).isFinite() && Math.abs(sim.position(1).length()-1)<1e-4 : "invalid low-rate chain";
@@ -568,6 +572,7 @@ public final class PhysCheck {
             var mesh=(GeoModel)method.invoke(null,geometry,com.elfmcys.yesstevemodel.resource.YSMClientMapper.buildContext(geometry),1,null,false);
             var d=mesh.ysmPhysics;
             System.out.printf("Actual model: %d joints, %d collision cubes%n",d.joints.size(),d.cubes.size());
+            for(var joint:d.joints) System.out.println("Actual joint: "+d.bones.get(joint.bone()).getName()+" outputs="+joint.outputs().length);
             boolean stable=true;
             for(int scenario=0;scenario<22;scenario++) {
                 int solverFps=scenario<11?120:60;
@@ -580,6 +585,7 @@ public final class PhysCheck {
                 simulation.setFrameRate(solverFps);
                 int contacts=0;
                 float lateMovement=0;
+                String lateJoint="";
                 Vector3f[] previousTips=new Vector3f[d.joints.size()];
                 int frames=speed==0?900:120;
                 for(int frame=0;frame<frames;frame++) {
@@ -596,8 +602,15 @@ public final class PhysCheck {
                         var joint=d.joints.get(j);
                         int end=joint.outputs()[0];
                         Vector3f tip=transforms[end].transformPosition(d.pivot(end));
-                        assert tip.distance(simulation.position(end))<2e-5f : "rendered contact pose differs from simulation";
-                        if(frame>600 && previousTips[j]!=null) lateMovement=Math.max(lateMovement,tip.distance(previousTips[j]));
+                        // Display interpolates rotation history, so its endpoint is
+                        // intentionally different from the current integration state.
+                        Vector3f pivot=transforms[joint.bone()].transformPosition(d.pivot(joint.bone()));
+                        float length=d.pivot(joint.bone()).distance(d.pivot(end))*(poseScenario>=4?.7f:1);
+                        assert tip.isFinite() && simulation.position(end).isFinite() : "non-finite actual-model state";
+                        assert Math.abs(tip.distance(pivot)-length)<2e-5f : "displayed actual-model bone length changed";
+                        if(frame>600 && previousTips[j]!=null && tip.distance(previousTips[j])>lateMovement) {
+                            lateMovement=tip.distance(previousTips[j]);lateJoint=d.bones.get(joint.bone()).getName()+" frame="+frame;
+                        }
                         previousTips[j]=tip;
                     }
                     for(var joint:d.joints) for(int end:joint.outputs()) for(var cube:d.cubes) {
@@ -613,7 +626,7 @@ public final class PhysCheck {
                 System.out.println("Actual rendered contacts at speed "+speed+", tilt "+tilt+", scaled="+(poseScenario>=4)+", FPS="+solverFps+": "+contacts);
                 stable &= contacts==0;
                 if(speed==0) {
-                    System.out.println("Static actual-model maximum late frame displacement: "+lateMovement);
+                    System.out.println("Static actual-model maximum late frame displacement: "+lateMovement+" joint="+lateJoint);
                     stable &= lateMovement<.003f;
                 }
             }

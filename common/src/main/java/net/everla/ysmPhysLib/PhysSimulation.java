@@ -29,6 +29,12 @@ public final class PhysSimulation {
     private Object world;
     private double originX,originY,originZ;
     private boolean initialized;
+    private int stepsInUpdate;
+    private boolean sampledFrame;
+    private boolean projectHandoffDisplay;
+    private float[] displayed;
+    private final Matrix4f displayedRoot=new Matrix4f();
+    private boolean displayedPaused;
     private final Vector3f frameVelocity=new Vector3f();
     private final List<PhysCollider> colliders=new ArrayList<>();
     private java.util.function.Function<AABB,Iterable<VoxelShape>> blockCollisions;
@@ -75,7 +81,58 @@ public final class PhysSimulation {
         activeJoints=definition.joints.stream().filter(j->active[j.bone()]).toList();
     }
 
-    public void invalidate() {initialized=false;lastTime=Double.NaN;accumulator=0;}
+    public void invalidate() {initialized=false;lastTime=Double.NaN;accumulator=0;projectHandoffDisplay=false;displayed=null;}
+
+    /** One-way upload at CPU -> GPU handoff; keep phase, inertia and interpolation history. */
+    boolean writeGpuState(java.nio.ByteBuffer data,GpuPhysModel model,GpuPhysics.Clock clock) {
+        if(!initialized || hybrid || !Double.isFinite(lastTime)) return false;
+        for(int tree=0;tree<model.trees;tree++) for(int original=0;original<positions.length;original++) {
+            int at=(tree*positions.length+model.sorted[original])*GpuPhysKernel.NODE_BYTES;
+            positions[original].get(at,data);velocities[original].get(at+16,data);
+            targets[original].get(at+32,data);
+            for(int history=0;history<2;history++) {
+                var q=history==0?rotations[original]:previousRotations[original];
+                int rotationAt=at+(history==0?48:224);
+                data.putFloat(rotationAt,q.x).putFloat(rotationAt+4,q.y).putFloat(rotationAt+8,q.z).putFloat(rotationAt+12,q.w);
+            }
+        }
+        clock.last=lastTime;clock.accumulator=accumulator;clock.world=world;
+        clock.originX=originX;clock.originY=originY;clock.originZ=originZ;
+        clock.fps=(int)Math.round(1/stepSeconds);
+        return true;
+    }
+
+    /** Only called after GPU ownership ends, before the next ordinary CPU update. */
+    void readGpuState(java.nio.ByteBuffer data,GpuPhysModel model,GpuPhysics.Clock clock) {
+        // Validate before replacing any CPU state; failed dispatches must reset cleanly.
+        for(int original=0;original<positions.length;original++) if(model.island[original]>=0) {
+            int at=(model.island[original]*positions.length+model.sorted[original])*GpuPhysKernel.NODE_BYTES;
+            for(int component=0;component<3;component++)
+                if(!Float.isFinite(data.getFloat(at+component*4)) || !Float.isFinite(data.getFloat(at+16+component*4)))
+                    throw new IllegalArgumentException("non-finite GPU handoff state");
+            if(definition.jointByBone[original]!=null) for(int history=0;history<2;history++) {
+                int rotationAt=at+(history==0?48:224);float norm=0;
+                for(int component=0;component<4;component++) {float value=data.getFloat(rotationAt+component*4);norm+=value*value;}
+                if(!Float.isFinite(norm) || Math.abs(norm-1)>.01f)
+                    throw new IllegalArgumentException("invalid GPU handoff rotation");
+            }
+        }
+        for(int original=0;original<positions.length;original++) if(model.island[original]>=0) {
+            int at=(model.island[original]*positions.length+model.sorted[original])*GpuPhysKernel.NODE_BYTES;
+            positions[original].set(data.getFloat(at),data.getFloat(at+4),data.getFloat(at+8));
+            velocities[original].set(data.getFloat(at+16),data.getFloat(at+20),data.getFloat(at+24));
+            for(int history=0;history<2;history++) {
+                var q=history==0?rotations[original]:previousRotations[original];
+                int rotationAt=at+(history==0?48:224);
+                q.set(data.getFloat(rotationAt),data.getFloat(rotationAt+4),data.getFloat(rotationAt+8),data.getFloat(rotationAt+12));
+            }
+        }
+        lastTime=clock.last;accumulator=clock.accumulator;world=clock.world;
+        originX=clock.originX;originY=clock.originY;originZ=clock.originZ;
+        stepSeconds=1.0/clock.fps;stepDuration=(float)stepSeconds;initialized=true;
+        projectHandoffDisplay=true;
+        displayed=null;
+    }
 
     /** Changing cadence starts from the current animation, without old-step debt. */
     public void setFrameRate(int fps) {
@@ -95,8 +152,18 @@ public final class PhysSimulation {
     /** Block queries are supplied only by the world-player adapter, never by UI previews. */
     public void update(float[] parameters, Matrix4f root, double time, boolean paused, Object currentWorld,
                        double x, double y, double z, java.util.function.Function<AABB,Iterable<VoxelShape>> blockCollisions) {
+        stepsInUpdate=0;
+        sampledFrame=false;
         if(activeJoints.isEmpty()) return;
         restore(parameters);
+        // Extra render passes can restore animation between identical world draws.
+        // Reuse only the displayed rotations, leaving caller-owned visibility/light intact.
+        if(projectHandoffDisplay && displayed!=null && time==lastTime && currentWorld==world
+                && x==originX && y==originY && z==originZ && paused==displayedPaused
+                && displayedRoot.equals(root) && java.util.Arrays.equals(base,parameters)) {
+            for(var joint:activeJoints) System.arraycopy(displayed,joint.bone()*12,parameters,joint.bone()*12,3);
+            applied=true;return;
+        }
         base=parameters.clone();
         currentRoot=root;
         if(!root.isFinite() || Math.abs(root.determinant())<1e-12f) {invalidate();return;}
@@ -113,6 +180,7 @@ public final class PhysSimulation {
             // below preserves inertia without applying the full frame jump per substep.
             for(var joint:activeJoints) if(joint.parent()<0 && positions[joint.bone()].distanceSquared(targets[joint.bone()])>16) reset=true;
         }
+        sampledFrame=!reset && !paused && time>lastTime;
         originX=x;originY=y;originZ=z;world=currentWorld;
         if(reset) {
             for(int i=0;i<positions.length;i++) {positions[i].set(targets[i]);velocities[i].zero();rotations[i].identity();previousRotations[i].identity();}
@@ -122,19 +190,26 @@ public final class PhysSimulation {
         if(!reset && !paused && elapsed>1e-9) frameVelocity.set(shift).mul((float)(-1/elapsed));
         else frameVelocity.zero();
         lastTime=time;
-        if(!paused && !reset && elapsed>0) {
+        if(reset || !paused && elapsed>0) {
             this.blockCollisions=blockCollisions;
-            blockContacts.clear();
-            colliders.clear();
+            blockContacts.clear();colliders.clear();
             boolean[] visible=visibility(base);
             for(var cube:definition.cubes) if(visible[cube.bone()]) colliders.add(new PhysCollider(cube.faces(),matrices[cube.bone()]));
-            accumulator=Math.min(accumulator+elapsed,stepSeconds*8.0);
-            for(int step=0;step<8 && accumulator+1e-9>=stepSeconds;step++) {
+            if(reset) {
+                // Establish a feasible rigid pose before seeding display history.
+                // The authored rest pose may already overlap a body or terrain.
+                constrain();
+                for(var joint:activeJoints) previousRotations[joint.bone()].set(rotations[joint.bone()]);
+            } else accumulator=Math.min(accumulator+elapsed,stepSeconds*8.0);
+            for(int step=0;!reset && step<8 && accumulator+1e-9>=stepSeconds;step++) {
+                stepsInUpdate++;
                 for(var joint:activeJoints) previousRotations[joint.bone()].set(rotations[joint.bone()]);
                 integrate();
                 for(int iteration=0;iteration<8;iteration++) {
+                    // Contact belongs to the length-preserving rigid pose. A second
+                    // free-particle projection moves shared endpoints incompatibly
+                    // with that pose and repeatedly launches resting chains.
                     constrain();
-                    collide(matrices);
                 }
                 // Positions and velocities are projected separately. Geometric
                 // correction must never be converted into an outward impulse.
@@ -143,6 +218,16 @@ public final class PhysSimulation {
             }
         }
         reconstruct(parameters);
+        if(projectHandoffDisplay) {
+            this.blockCollisions=blockCollisions;
+            blockContacts.clear();colliders.clear();
+            boolean[] visible=visibility(base);
+            for(var cube:definition.cubes) if(visible[cube.bone()]) colliders.add(new PhysCollider(cube.faces(),matrices[cube.bone()]));
+            projectDisplayedContacts(parameters,root);
+            if(displayed==null) displayed=new float[parameters.length];
+            System.arraycopy(parameters,0,displayed,0,parameters.length);
+            displayedRoot.set(root);displayedPaused=paused;
+        }
         this.blockCollisions=null;
         blockContacts.clear();
         applied=true;
@@ -185,28 +270,6 @@ public final class PhysSimulation {
         pose(base.clone(),currentRoot);
     }
 
-    private void collide(Matrix4f[] matrices) {
-        Vector3f scale=new Vector3f();
-        for(var joint:activeJoints) {
-            matrices[joint.bone()].getScale(scale);
-            float radius=joint.parameters().c()/16f*Math.max(scale.x,Math.max(scale.y,scale.z));
-            for(int end:joint.outputs()) for(PhysCollider collider:joint.parameters().bc() && blockCollisions!=null?contacts(joint,
-                    new AABB(positions[joint.bone()].x,positions[joint.bone()].y,positions[joint.bone()].z,
-                            positions[end].x,positions[end].y,positions[end].z).inflate(radius)):colliders) {
-                Vector3f startBefore=new Vector3f(positions[joint.bone()]), endBefore=new Vector3f(positions[end]);
-                resolveContact(collider,positions[joint.bone()],positions[end],velocities[joint.bone()],velocities[end],radius,joint.parent()<0,frameVelocity);
-                if(joint.parent()>=0 && positions[joint.bone()].distanceSquared(startBefore)<radius*radius*.01f
-                        && positions[end].distanceSquared(endBefore)<radius*radius*.01f) {
-                    // Under-relax shallow shared-node contacts to avoid alternating
-                    // with the parent's length constraint. Deep contacts stay hard.
-                    positions[joint.bone()].lerp(startBefore,.5f);
-                    positions[end].lerp(endBefore,.5f);
-                }
-                if(!positions[end].isFinite() || !velocities[end].isFinite()) {positions[end].set(targets[end]);velocities[end].zero();}
-            }
-        }
-    }
-
     /** Body colliders share the player's translating frame; terrain does not. */
     static void resolveContact(PhysCollider collider, Vector3f start, Vector3f end, Vector3f startVelocity,
                                Vector3f endVelocity, float radius, boolean fixedStart, Vector3f frameVelocity) {
@@ -223,6 +286,47 @@ public final class PhysSimulation {
             Quaternionf local=new Quaternionf().rotationZYX(base[i*12+2],base[i*12+1],base[i*12]);
             Vector3f euler=PhysMath.eulerZYX(new Quaternionf(previousRotations[i]).nlerp(rotations[i],alpha).mul(local).normalize());
             if(euler.isFinite()) {output[i*12]=euler.x;output[i*12+1]=euler.y;output[i*12+2]=euler.z;}
+        }
+    }
+
+    /** Project only CPU display after GPU handoff; persistent integration state is untouched. */
+    private void projectDisplayedContacts(float[] output,Matrix4f root) {
+        Matrix4f[] actual=new Matrix4f[positions.length];
+        for(int i:definition.order) {
+            int parent=definition.bones.get(i).parentIdx;
+            Matrix4f before=parent<0?root:actual[parent];
+            var joint=active==null || active[i]?definition.jointByBone[i]:null;
+            if(joint!=null) {
+                var animated=RenderUtils.prepMatrixForBone(definition.bones.get(i),new Matrix4f(before),base,i*12);
+                var pivot=animated.transformPosition(definition.pivot(i),new Vector3f());
+                var inverse=new Matrix4f(before).invert();
+                var from=new ArrayList<Vector3f>();float reach=0;
+                for(int end:joint.outputs()) {
+                    var child=RenderUtils.prepMatrixForBone(definition.bones.get(end),new Matrix4f(animated),base,end*12);
+                    var source=child.transformPosition(definition.pivot(end),new Vector3f()).sub(pivot);
+                    reach=Math.max(reach,source.length());from.add(inverse.transformDirection(source));
+                }
+                var scale=animated.getScale(new Vector3f());
+                float radius=joint.parameters().c()/16f*Math.max(scale.x,Math.max(scale.y,scale.z));
+                var contacts=contacts(joint,new AABB(pivot.x,pivot.y,pivot.z,pivot.x,pivot.y,pivot.z).inflate(reach+radius));
+                if(!contacts.isEmpty()) {
+                    var local=new Quaternionf().rotationZYX(base[i*12+2],base[i*12+1],base[i*12]);
+                    var correction=new Quaternionf().rotationZYX(output[i*12+2],output[i*12+1],output[i*12]).mul(new Quaternionf(local).invert());
+                    for(int pass=0;pass<24;pass++) {
+                        var desired=new ArrayList<Vector3f>();boolean hit=false;
+                        for(var source:from) {
+                            var endpoint=before.transformDirection(new Vector3f(source).rotate(correction)).add(pivot);
+                            for(var collider:contacts) hit=collider.resolveSegment(new Vector3f(pivot),endpoint,new Vector3f(),new Vector3f(),radius,true)||hit;
+                            desired.add(inverse.transformDirection(endpoint.sub(pivot)));
+                        }
+                        if(!hit) break;
+                        correction=PhysMath.limit(PhysMath.fit(from,desired,correction),joint.parameters().a());
+                    }
+                    var euler=PhysMath.eulerZYX(correction.mul(local).normalize());
+                    if(euler.isFinite()) {output[i*12]=euler.x;output[i*12+1]=euler.y;output[i*12+2]=euler.z;}
+                }
+            }
+            actual[i]=RenderUtils.prepMatrixForBone(definition.bones.get(i),new Matrix4f(before),output,i*12);
         }
     }
 
@@ -252,8 +356,8 @@ public final class PhysSimulation {
                 // project that displacement away and put the visible segment back inside.
                 Vector3f scale=animated.getScale(new Vector3f());
                 float radius=joint.parameters().c()/16f*Math.max(scale.x,Math.max(scale.y,scale.z));
-                List<PhysCollider> contacts=colliders;
-                if(joint.parameters().bc() && blockCollisions!=null) {
+                List<PhysCollider> contacts;
+                {
                     float reach=0;
                     for(Vector3f source:from) reach=Math.max(reach,source.length());
                     // Frobenius norm bounds every rotated direction, including nonuniform parent scaling.
@@ -330,16 +434,18 @@ public final class PhysSimulation {
     }
 
     public Vector3f position(int bone) {return new Vector3f(positions[bone]);}
+    int stepsInUpdate() {return stepsInUpdate;}
+    boolean sampledFrame() {return sampledFrame;}
 
     private List<PhysCollider> contacts(PhysDefinition.Joint joint,AABB bounds) {
-        if(!joint.parameters().bc() || blockCollisions==null) return colliders;
         var cached=blockContacts.get(joint.bone());
         if(cached!=null && contains(cached.bounds,bounds)) return cached.contacts;
         // Cache per joint and simulation frame. Enclose all candidate rotations, not just the free tip.
         AABB query=(cached==null?bounds:cached.bounds.minmax(bounds)).inflate(.01);
         if(!Double.isFinite(query.getSize())) return colliders;
-        var result=new ArrayList<>(colliders);
-        for(VoxelShape shape:blockCollisions.apply(query.move(originX,originY,originZ)))
+        var result=new ArrayList<PhysCollider>();
+        for(var collider:colliders) if(collider.overlaps(query)) result.add(collider);
+        if(joint.parameters().bc() && blockCollisions!=null) for(VoxelShape shape:blockCollisions.apply(query.move(originX,originY,originZ)))
             for(AABB box:shape.toAabbs()) if(box.getXsize()>0 && box.getYsize()>0 && box.getZsize()>0)
                 result.add(new PhysCollider(box.move(-originX,-originY,-originZ)));
         blockContacts.put(joint.bone(),new BlockContacts(query,result));

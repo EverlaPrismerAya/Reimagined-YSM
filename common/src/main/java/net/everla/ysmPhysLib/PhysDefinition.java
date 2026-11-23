@@ -19,6 +19,7 @@ public final class PhysDefinition {
     public final int[] order;
     public final Joint[] jointByBone;
     public final boolean[] affected;
+    final boolean[] physicsScale;
 
     public PhysDefinition(GeoModel model, Consumer<String> warning) {
         List<Joint> joints=new ArrayList<>();
@@ -91,6 +92,16 @@ public final class PhysDefinition {
         }
         this.joints=List.copyOf(joints);
         this.cubes=List.copyOf(cubes);
+        physicsScale=new boolean[size];
+        for(var joint:joints) {
+            requireScale(joint.bone());
+            for(int end:joint.outputs()) requireScale(end);
+        }
+        for(var cube:cubes) requireScale(cube.bone());
+    }
+
+    private void requireScale(int bone) {
+        for(int i=bone;i>=0 && !physicsScale[i];i=bones.get(i).parentIdx) physicsScale[i]=true;
     }
 
     /** Physical ancestors and ordinary descendants form an indivisible dependency island. */
@@ -113,11 +124,9 @@ public final class PhysDefinition {
         return result;
     }
 
-    /** Body contacts can affect every physical island. Keep their unvalidated GPU
-     * solver off, but still generate the final matrices on GPU for both draw paths. */
+    /** Supported instances solve complete dependency islands on GPU, including contacts. */
     boolean[] cpuCollisionIslands() {
-        if(cubes.isEmpty()) return blockCollisionIslands();
-        return affected.clone();
+        return new boolean[bones.size()];
     }
 
     private int depth(int i) {
