@@ -57,9 +57,11 @@ public final class GpuMeshBuilder {
         GlStateManager._glBindBuffer(GL15.GL_ARRAY_BUFFER, 0);
         GlStateManager._glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, 0);
 
-        GeoModel.nReleaseGpuMeshScratch(handle);
-
-        return new GpuMesh(handle, vao, vbo, ibo, vertexCount, indexCount, boneCount, meta[3], meta[4], meta[5], meta[6], meta[7], meta[8]);
+        GpuMesh mesh=new GpuMesh(handle, vao, vbo, ibo, vertexCount, indexCount, boneCount, meta[3], meta[4], meta[5], meta[6], meta[7], meta[8]);
+        try {
+            if(model.hasGroupStyles) mesh.groups=new GroupGpuMesh(vbuf,ibuf);
+        } finally {GeoModel.nReleaseGpuMeshScratch(handle);}
+        return mesh;
     }
 
     private static ByteBuffer serializeModel(GeoModel model) {

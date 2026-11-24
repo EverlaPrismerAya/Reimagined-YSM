@@ -14,6 +14,7 @@ public final class GpuPose implements AutoCloseable {
     public final int boneSsbo;
     public final ByteBuffer boneBuffer;
     private int xformVbo, xformVao;
+    private int groupVbo,groupVao;
     private boolean closed;
 
     GpuPose(float[] parameters, int boneCount) {
@@ -26,6 +27,21 @@ public final class GpuPose implements AutoCloseable {
 
     public int xformVbo() { return xformVbo; }
     public int xformVao() { return xformVao; }
+    public int groupVbo() { return groupVbo; }
+    public int groupVao() { return groupVao; }
+
+    public void ensureGroupBuffers(GroupGpuMesh mesh) {
+        if(groupVao!=0) return;
+        groupVbo=GL15.glGenBuffers();groupVao=GL30.glGenVertexArrays();
+        GL30.glBindVertexArray(groupVao);GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER,groupVbo);
+        GL15.glBufferData(GL15.GL_ARRAY_BUFFER,(long)mesh.vertices*3*36,GL15.GL_DYNAMIC_DRAW);
+        GL20.glEnableVertexAttribArray(0);GL20.glVertexAttribPointer(0,3,GL11.GL_FLOAT,false,36,0);
+        GL20.glEnableVertexAttribArray(1);GL20.glVertexAttribPointer(1,4,GL11.GL_UNSIGNED_BYTE,true,36,12);
+        GL20.glEnableVertexAttribArray(2);GL20.glVertexAttribPointer(2,2,GL11.GL_FLOAT,false,36,16);
+        GL20.glEnableVertexAttribArray(3);GL30.glVertexAttribIPointer(3,2,GL11.GL_SHORT,36,24);
+        GL20.glEnableVertexAttribArray(4);GL30.glVertexAttribIPointer(4,2,GL11.GL_SHORT,36,28);
+        GL20.glEnableVertexAttribArray(5);GL20.glVertexAttribPointer(5,3,GL11.GL_BYTE,true,36,32);
+    }
 
     public void uploadBones() {
         GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER, boneSsbo);
@@ -66,6 +82,8 @@ public final class GpuPose implements AutoCloseable {
         GlStateManager._glDeleteBuffers(boneSsbo);
         if (xformVbo != 0) GlStateManager._glDeleteBuffers(xformVbo);
         if (xformVao != 0) GL30.glDeleteVertexArrays(xformVao);
+        if(groupVbo!=0) GL15.glDeleteBuffers(groupVbo);
+        if(groupVao!=0) GL30.glDeleteVertexArrays(groupVao);
         MemoryUtil.memFree(boneBuffer);
     }
 }

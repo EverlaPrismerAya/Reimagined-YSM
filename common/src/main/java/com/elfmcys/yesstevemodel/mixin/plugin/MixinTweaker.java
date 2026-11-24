@@ -21,6 +21,9 @@ public class MixinTweaker implements IMixinConfigPlugin {
 
     @Keep
     public boolean shouldApplyMixin(String str, String str2) {
+        if (str2.equals("com.elfmcys.yesstevemodel.mixin.client.RandomFramerateMixin")) {
+            return com.elfmcys.yesstevemodel.RuntimePolicy.isDisabled();
+        }
         return !com.elfmcys.yesstevemodel.RuntimePolicy.isDisabled();
     }
 

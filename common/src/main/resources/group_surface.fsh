@@ -25,16 +25,14 @@ void main() {
     if(alphaMode==1 && tex.a<0.99) discard;
     if(alphaMode==2 && tex.a>=0.99) discard;
     fragColor=mode==1 ? vec4(tint.rgb,tex.a*vertexColor.a) : tex*vertexColor;
-    if(mode==0) {
-        vec3 n=normalize(normal);
-        float shade=min(1.0,(max(0.0,dot(normalize(light0),n))+max(0.0,dot(normalize(light1),n)))*.6+.4);
-        fragColor.rgb*=shade;
-        vec4 overlay=texelFetch(overlayMap,ivec2(packedOverlay&65535,(packedOverlay>>16)&65535),0);
-        fragColor.rgb=mix(overlay.rgb,fragColor.rgb,overlay.a);
-        ivec2 luv=glowing?ivec2(15):ivec2((packedLight&65535)/16,((packedLight>>16)&65535)/16);
-        fragColor.rgb*=texelFetch(lightmap,luv,0).rgb;
-        float distance=fogShape==0?length(position):max(length(position.xz),abs(position.y));
-        float fog=distance<=fogStart?0.0:distance>=fogEnd?1.0:smoothstep(fogStart,fogEnd,distance);
-        fragColor.rgb=mix(fragColor.rgb,fogColor.rgb,fog*fogColor.a);
-    }
+    vec3 n=normalize(normal);
+    float shade=min(1.0,(max(0.0,dot(normalize(light0),n))+max(0.0,dot(normalize(light1),n)))*.6+.4);
+    fragColor.rgb*=shade;
+    vec4 overlay=texelFetch(overlayMap,ivec2(packedOverlay&65535,(packedOverlay>>16)&65535),0);
+    fragColor.rgb=mix(overlay.rgb,fragColor.rgb,overlay.a);
+    ivec2 luv=glowing?ivec2(15):ivec2((packedLight&65535)/16,((packedLight>>16)&65535)/16);
+    fragColor.rgb*=texelFetch(lightmap,luv,0).rgb;
+    float distance=fogShape==0?length(position):max(length(position.xz),abs(position.y));
+    float fog=distance<=fogStart?0.0:distance>=fogEnd?1.0:smoothstep(fogStart,fogEnd,distance);
+    fragColor.rgb=mix(fragColor.rgb,fogColor.rgb,fog*fogColor.a);
 }

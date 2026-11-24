@@ -21,6 +21,7 @@ public final class GpuMesh {
     private final WeakHashMap<float[], GpuPose> poses = new WeakHashMap<>();
     private final Set<GpuPose> poseResources = new HashSet<>();
     private boolean disposed = false;
+    public GroupGpuMesh groups;
 
     GpuMesh(long pointer, int vao, int vbo, int ibo, int vertexCount, int indexCount, int boneCount, int pm1s, int pm1c, int pm2s, int pm2c, int pm3s, int pm3c) {
         this.pointer = pointer;
@@ -82,6 +83,7 @@ public final class GpuMesh {
     public void dispose() {
         if (disposed) return;
         disposed = true;
+        if(groups!=null) groups.close();
         GlStateManager._glDeleteBuffers(vbo);
         GlStateManager._glDeleteBuffers(ibo);
         GL30.glDeleteVertexArrays(vao);

@@ -8,6 +8,7 @@
     "defaultRequire": 1
   },
   "client": [
+    "client.RandomFramerateMixin",
     "client.ArrowEntityAccessor", "client.BufferSourceMixin", "client.EntityRenderDispatcherMixin",
     "client.FishingHookAccessor", "client.InventoryScreenMixin", "client.LivingEntityAccessor",
     "client.LivingRendererMixin", "client.PauseScreenMixin", "client.RenderSystemAccessor", "client.ScreenAccessor",

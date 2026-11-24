@@ -151,7 +151,7 @@ public final class GpuRenderPath {
         mc.gameRenderer.lightTexture().turnOffLightLayer();
         return true;
     }
-    static void updateBoneVisibility(List<GeoModel.BakedBone> bones, float[] params, ByteBuffer buffer) {
+    public static void updateBoneVisibility(List<GeoModel.BakedBone> bones, float[] params, ByteBuffer buffer) {
         // Native matrices do not account for the hide-self flag. Recompute visibility
         // from this draw's parameters, including ancestors, without hiding siblings.
         for (int i = 0; i < bones.size(); i++) {

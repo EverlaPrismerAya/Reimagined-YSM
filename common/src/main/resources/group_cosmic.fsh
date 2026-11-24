@@ -113,15 +113,13 @@ void main (void)
 		
 		// get pseudorandom variants
 		int symbol = int(rand2d(vec2(tu, tv + i * 10.0)) * cosmicoutof);
-		int rotation = int(mod(pow(tu,float(tv)) + tu + 3 + tv*i, 8));
-		bool flip = false;
-		if (rotation >= 4) {
-			rotation -= 4;
-			flip = true;
-		}
 		
 		// if it's an icon, then add the colour!
 		if (symbol >= 0 && symbol < cosmiccount) {
+			// Only occupied tiles need an orientation (10 of 101 symbols).
+			int rotation = int(mod(pow(tu,float(tv)) + tu + 3 + tv*i, 8));
+			bool flip = rotation >= 4;
+			if (flip) rotation -= 4;
 			
 			vec2 cosmictex = vec2(1.0,1.0);
 			vec4 tcol = vec4(1.0,0.0,0.0,1.0);
