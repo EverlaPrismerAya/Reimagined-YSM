@@ -34,6 +34,7 @@ public final class ClientSetupEvent {
         ClientLifecycleEvent.CLIENT_STOPPING.register(client -> {
             net.everla.ysmPhysLib.GpuPhysics.shutdown();
             net.everla.reimaginedysm.gpu.GpuRenderPath.shutdown();
+            com.elfmcys.yesstevemodel.geckolib3.geo.GroupEffectRenderer.shutdown();
         });
         if (YesSteveModel.isAvailable()) {
             AnimationRegister.registerAnimationState();

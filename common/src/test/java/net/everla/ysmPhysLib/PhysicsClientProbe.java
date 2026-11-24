@@ -12,6 +12,7 @@ import org.lwjgl.opengl.GL30;
 /** Development-only mod, packaged only by -PphysicsClientProbe. Never part of the release. */
 public final class PhysicsClientProbe {
     private Object scene;
+    private int groupFrames;
     private final boolean worldProbe=Boolean.getBoolean("ysm.physicsWorldProbe");
     private boolean openingWorld;
     private AnimatedGeoModel owner;
@@ -57,6 +58,13 @@ public final class PhysicsClientProbe {
             if(worldProbe && (client.player==null || client.screen!=null)) return;
             if(!worldProbe && client.screen==null) return;
             scene=client.level;
+            if(Boolean.getBoolean("ysm.groupShaderProbe") && groupFrames>=360) {
+                try(var image=net.minecraft.client.Screenshot.takeScreenshot(client.getMainRenderTarget())) {
+                    image.writeToFile(java.nio.file.Path.of(System.getProperty("ysm.physicsProbeResult")).resolveSibling("group-shader.png"));
+                }
+                java.nio.file.Files.writeString(java.nio.file.Path.of(System.getProperty("ysm.physicsProbeResult")),"PASS");
+                done=true;client.stop();return;
+            }
             if(frameBenchmark) return; // Actual world render event owns measured simulation and drawing.
             if(worldProbe && sceneIndex==3) {renderAdapter(client);return;}
             if(owner==null) {
@@ -159,7 +167,7 @@ public final class PhysicsClientProbe {
         var client=Minecraft.getInstance();
         if(client.level==null || client.player==null || client.screen!=null || client.getOverlay()!=null) return;
         scene=client.level;worldView=new Matrix4f(pose.last().pose());worldPartialTick=partialTick;
-        try {renderAdapter(client);}
+        try {renderAdapter(client);groupFrames++;}
         catch(Throwable failure) {done=true;failure.printStackTrace();System.out.println("CLIENT-PROBE FAIL: "+failure);client.stop();}
         finally {worldView=null;}
     }
@@ -219,14 +227,20 @@ public final class PhysicsClientProbe {
                     positionedCamera=true;
                     var playerId=client.player.getUUID();
                     client.getSingleplayerServer().execute(()->{
+                        if(Boolean.getBoolean("ysm.groupShaderProbe")) {
+                            var level=client.getSingleplayerServer().overworld();
+                            level.getGameRules().getRule(net.minecraft.world.level.GameRules.RULE_DAYLIGHT).set(false,client.getSingleplayerServer());
+                            level.setDayTime(18000);
+                            level.setWeatherParameters(6000,0,false,false);
+                        }
                         var player=client.getSingleplayerServer().getPlayerList().getPlayer(playerId);
-                        if(player!=null) player.connection.teleport(4,-60,6,180,12);
+                        if(player!=null) player.connection.teleport(0,-60,4,180,10);
                     });
                 }
                 ClientConfigScope.effective(PhysConfig.EXPERIMENTAL_GPU).set(benchmarkPhase%2==1);
                 ClientConfigScope.effective(GeneralConfig.USE_GPU_RENDERER).set(true);
                 ClientConfigScope.effective(GeneralConfig.USE_COMPATIBILITY_RENDERER).set(false);
-                client.options.enableVsync().set(false);client.options.framerateLimit().set(Integer.getInteger("ysm.physicsFrameLimit",260));
+                client.options.enableVsync().set(false);client.options.framerateLimit().set(Boolean.getBoolean("ysm.groupShaderProbe")?60:Integer.getInteger("ysm.physicsFrameLimit",260));
                 frameTimes.clear();workTimes.clear();lastFrame=0;measuredGpuFrames=0;capturedGpuFrame=false;
             }
             adapterStartTick=client.player.tickCount;
@@ -258,10 +272,22 @@ public final class PhysicsClientProbe {
         boolean gpu=frameBenchmark?GpuPhysics.active(owner.getMatrixData()):GpuPhysics.render(owner.getMatrixData(),pose,15728880)!=0;
         if(frameBenchmark) {
             var drawPose=new com.mojang.blaze3d.vertex.PoseStack();drawPose.mulPoseMatrix(pose);
+            if(Boolean.getBoolean("ysm.groupShaderProbe")) {
+                WorldPhysicsContext.begin(view);
+                try {
+                    com.elfmcys.yesstevemodel.geckolib3.geo.NativeModelRenderer.renderMesh(
+                            new com.mojang.blaze3d.vertex.BufferBuilder(256),drawPose.last(),owner.getGeoModel(),owner.getMatrixData(),
+                            owner.getAbsPivotData(),0,0,net.minecraft.client.renderer.LevelRenderer.getLightColor(client.level,adapter.entity.blockPosition()),net.minecraft.client.renderer.texture.OverlayTexture.NO_OVERLAY,
+                            1,1,1,1,visualTexture);
+                    int error=GL11.glGetError();
+                    if(error!=GL11.GL_NO_ERROR) throw new AssertionError("Group shader GL error 0x"+Integer.toHexString(error));
+                } finally {WorldPhysicsContext.end();}
+            } else {
             if(!net.everla.reimaginedysm.gpu.GpuRenderPath.tryRender(owner.getGeoModel(),drawPose.last(),owner.getMatrixData(),
-                    owner.getAbsPivotData(),0,0,15728880,net.minecraft.client.renderer.texture.OverlayTexture.NO_OVERLAY,
+                    owner.getAbsPivotData(),0,0,net.minecraft.client.renderer.LevelRenderer.getLightColor(client.level,adapter.entity.blockPosition()),net.minecraft.client.renderer.texture.OverlayTexture.NO_OVERLAY,
                     1,1,1,1,visualProbe?visualTexture:new net.minecraft.resources.ResourceLocation("minecraft","textures/block/white_concrete.png")))
                 throw new AssertionError("world mesh draw rejected");
+            }
             gpu=GpuPhysics.active(owner.getMatrixData());
             if(gpu && !capturedGpuFrame) {
                 capturedGpuFrame=true;

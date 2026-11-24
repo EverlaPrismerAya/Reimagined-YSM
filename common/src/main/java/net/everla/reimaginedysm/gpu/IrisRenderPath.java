@@ -21,12 +21,12 @@ public final class IrisRenderPath {
     private static final float[] modelViewScratch = new float[16];
 
 
-    public static boolean tryRender(GeoModel model, PoseStack.Pose pose, float[] boneParams, int renderPartMask, int packedLight, int packedOverlay, float r, float g, float b, float a, ResourceLocation textureLocation) {
+    public static boolean tryRender(GeoModel model, PoseStack.Pose pose, float[] boneParams, int textureIndex, int renderPartMask, int packedLight, int packedOverlay, float r, float g, float b, float a, ResourceLocation textureLocation) {
         if (!GpuCapability.isAvailable()) return false;
         int vao=GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING);
         int array=GL11.glGetInteger(GL15.GL_ARRAY_BUFFER_BINDING);
         try(var saved=new ShaderUtil.SavedComputeState(3)) {
-            return render(model,pose,boneParams,renderPartMask,packedLight,packedOverlay,r,g,b,a,textureLocation);
+            return render(model,pose,boneParams,textureIndex,renderPartMask,packedLight,packedOverlay,r,g,b,a,textureLocation);
         } catch(Exception | LinkageError | OutOfMemoryError failure) {
             YesSteveModel.LOGGER.error("Iris GPU draw failed; using CPU pose and fallback rendering",failure);
             net.everla.ysmPhysLib.GpuPhysics.fallback(boneParams);
@@ -38,7 +38,7 @@ public final class IrisRenderPath {
         }
     }
 
-    private static boolean render(GeoModel model,PoseStack.Pose pose,float[] boneParams,int renderPartMask,
+    private static boolean render(GeoModel model,PoseStack.Pose pose,float[] boneParams,int textureIndex,int renderPartMask,
                                   int packedLight,int packedOverlay,float r,float g,float b,float a,ResourceLocation textureLocation) {
 
         if (!BoneXformCompute.ensureCompiled()) return false;
@@ -82,16 +82,14 @@ public final class IrisRenderPath {
         GL43.glMemoryBarrier(GL43.GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT | GL43.GL_SHADER_STORAGE_BARRIER_BIT);
         checkError("vertex transform");
 
-        RenderType rt = RenderType.entityCutoutNoCull(textureLocation);
+        RenderType rt = model.isTranslucentTexture(textureIndex)
+                ? RenderType.entityTranslucent(textureLocation) : RenderType.entityCutoutNoCull(textureLocation);
         ShaderInstance shader=null;
         try {
             rt.setupRenderState();
             shader=RenderSystem.getShader();
             if(shader==null) return false;
-            if(shader.MODEL_VIEW_MATRIX!=null) shader.MODEL_VIEW_MATRIX.set(pose.pose());
-            if(shader.PROJECTION_MATRIX!=null) shader.PROJECTION_MATRIX.set(RenderSystem.getProjectionMatrix());
-            if(shader.COLOR_MODULATOR!=null) shader.COLOR_MODULATOR.set(1.0f,1.0f,1.0f,1.0f);
-            if(shader.GLINT_ALPHA!=null) shader.GLINT_ALPHA.set(1.0f);
+            setupShader(shader,pose.pose());
             shader.apply();
             GlStateManager._glBindVertexArray(instance.xformVao());
             int drawCount=mesh.indexDrawCount(renderPartMask);
@@ -103,6 +101,28 @@ public final class IrisRenderPath {
             finally {rt.clearRenderState();}
         }
     }
+    public static void setupShader(ShaderInstance shader,Matrix4f modelView) {
+        if(shader.MODEL_VIEW_MATRIX!=null) shader.MODEL_VIEW_MATRIX.set(modelView);
+        if(shader.PROJECTION_MATRIX!=null) shader.PROJECTION_MATRIX.set(RenderSystem.getProjectionMatrix());
+        if(shader.COLOR_MODULATOR!=null) shader.COLOR_MODULATOR.set(1.0f,1.0f,1.0f,1.0f);
+        if(shader.GLINT_ALPHA!=null) shader.GLINT_ALPHA.set(1.0f);
+        // Match BufferUploader's entity shader contract. apply() alone does not
+        // populate samplers: an unset light/overlay sampler can erase the body.
+        for (int unit = 0; unit < 12; unit++)
+            shader.setSampler("Sampler" + unit, RenderSystem.getShaderTexture(unit));
+        if(shader.FOG_START!=null) shader.FOG_START.set(RenderSystem.getShaderFogStart());
+        if(shader.FOG_END!=null) shader.FOG_END.set(RenderSystem.getShaderFogEnd());
+        if(shader.FOG_COLOR!=null) shader.FOG_COLOR.set(RenderSystem.getShaderFogColor());
+        if(shader.FOG_SHAPE!=null) shader.FOG_SHAPE.set(RenderSystem.getShaderFogShape().getIndex());
+        if(shader.TEXTURE_MATRIX!=null) shader.TEXTURE_MATRIX.set(RenderSystem.getTextureMatrix());
+        if(shader.GAME_TIME!=null) shader.GAME_TIME.set(RenderSystem.getShaderGameTime());
+        if(shader.SCREEN_SIZE!=null) {
+            var window=net.minecraft.client.Minecraft.getInstance().getWindow();
+            shader.SCREEN_SIZE.set((float)window.getWidth(),(float)window.getHeight());
+        }
+        RenderSystem.setupShaderLights(shader);
+    }
+
     private static void checkError(String stage) {
         int error=GL11.glGetError();
         if(error!=GL11.GL_NO_ERROR) throw new IllegalStateException("Iris "+stage+" GL error 0x"+Integer.toHexString(error));

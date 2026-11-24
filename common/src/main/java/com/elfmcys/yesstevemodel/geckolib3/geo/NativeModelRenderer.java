@@ -64,7 +64,7 @@ public class NativeModelRenderer {
         boolean isPreview = isPreview();
 
         if (textureLocation != null && buffer instanceof BufferBuilder
-                && (model.hasGroupStyles || model.isTranslucentTexture(textureIndex))) {
+                && model.hasGroupStyles) {
             if (GroupEffectRenderer.render(pose, model,
                     boneParams, stateBuffer,
                     textureIndex, renderPartMask, packedLight, packedOverlay, red, green, blue, alpha,
@@ -83,7 +83,7 @@ public class NativeModelRenderer {
             }
 
             if (OculusCompat.isShaderPackInUse()) {
-                if (IrisRenderPath.tryRender(model, pose, boneParams, renderPartMask, packedLight, packedOverlay, red, green, blue, alpha, textureLocation)) {
+                if (IrisRenderPath.tryRender(model, pose, boneParams, textureIndex, renderPartMask, packedLight, packedOverlay, red, green, blue, alpha, textureLocation)) {
                     renderFacingCamera(buffer, pose, model, boneParams, stateBuffer, textureIndex,
                             renderPartMask, packedLight, packedOverlay, red, green, blue, alpha, isPreview);
                     return;
