@@ -20,7 +20,7 @@ public final class PhysConfig {
         var enabled=builder.comment("Enable ysmPhys simulation for world entities using YSM models. UI previews are excluded.").define("Enabled",true);
         var fps=builder.comment("Physics steps per second (1-120). Recommended: 60. Lower rates lose subtle player movement input and may cause counterintuitive movement and visible jumping.")
                 .defineInRange("SimulationFPS",60,1,120);
-        var gpu=builder.comment("OpenGL 4.3 compute/SSBO physics: GPU integration, rigid constraints, model contacts and terrain contacts. CPU extracts VoxelShape snapshots. Measured CPU/GPU costs select the backend after calibration. Supports Oculus/Iris; unsupported transforms and CPU pose consumers use CPU. Benchmark the actual workload.")
+        var gpu=builder.comment("GPU physics acceleration (supported feature). The legacy configuration key is retained for saved-setting compatibility. OpenGL 4.3 compute/SSBO integration, rigid constraints, model contacts and terrain contacts. New model/material features must preserve GPU solver ownership. CPU extracts VoxelShape snapshots. Measured CPU/GPU costs select the backend after calibration.")
                 .define("ExperimentalGPUAcceleration",true);
         if(local) {Local.ENABLED=enabled;Local.FPS=fps;Local.EXPERIMENTAL_GPU=gpu;}
         else {ENABLED=enabled;FPS=fps;EXPERIMENTAL_GPU=gpu;}

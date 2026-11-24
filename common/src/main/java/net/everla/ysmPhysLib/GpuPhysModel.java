@@ -73,12 +73,12 @@ final class GpuPhysModel implements AutoCloseable {
                 int parent=definition.bones.get(i).parentIdx;
                 var joint=cpu[i]?null:definition.jointByBone[i];
                 var pivot=definition.pivot(i);
-                data.putFloat(pivot.x).putFloat(pivot.y).putFloat(pivot.z).putFloat(i);
+                data.putFloat(pivot.x).putFloat(pivot.y).putFloat(pivot.z).putFloat(definition.tailDepth[i]);
                 data.putInt(parent<0?-1:sorted[parent]).putInt(first[i]).putInt(next[i])
                         .putInt(joint==null?-2:joint.parent()<0?-1:sorted[joint.parent()]);
                 var p=joint==null?PhysParameters.DEFAULT:joint.parameters();
-                data.putFloat(p.r()).putFloat(p.g()).putFloat(p.s()).putFloat(p.a());
-                data.putFloat(p.c()).putFloat(p.air()).putFloat(glowing[i]?1:0).putFloat(ends[i]?1:0);
+                data.putFloat(p.r()).putFloat(p.gw()==null?p.g():p.gw()).putFloat(p.s()).putFloat(p.a());
+                data.putFloat(p.c()).putFloat(p.air()).putFloat((p.gw()!=null?1:0)+(definition.tails[i]?2:0)).putFloat(ends[i]?1:0);
                 data.putInt(island[i]).putInt(i).putInt(glowing[i]?1:0).putInt(p.bc()?1:0);
             }
             data.flip();buffer=GL15.glGenBuffers();

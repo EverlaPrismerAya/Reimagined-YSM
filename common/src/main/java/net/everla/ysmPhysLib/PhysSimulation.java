@@ -17,6 +17,7 @@ public final class PhysSimulation {
     private float stepDuration=STEP;
     private final PhysDefinition definition;
     private final Vector3f[] positions, velocities, targets;
+    private final float[] tailPhase;
     private final Quaternionf[] rotations, previousRotations;
     private List<PhysDefinition.Joint> activeJoints;
     private boolean[] active;
@@ -45,6 +46,7 @@ public final class PhysSimulation {
         this.definition=definition;
         activeJoints=definition.joints;
         int count=definition.bones.size();
+        tailPhase=new float[count];
         positions=new Vector3f[count];velocities=new Vector3f[count];targets=new Vector3f[count];rotations=new Quaternionf[count];
         for(int i=0;i<count;i++) {positions[i]=new Vector3f();velocities[i]=new Vector3f();targets[i]=new Vector3f();rotations[i]=new Quaternionf();}
         previousRotations=new Quaternionf[count];
@@ -89,6 +91,7 @@ public final class PhysSimulation {
         for(int tree=0;tree<model.trees;tree++) for(int original=0;original<positions.length;original++) {
             int at=(tree*positions.length+model.sorted[original])*GpuPhysKernel.NODE_BYTES;
             positions[original].get(at,data);velocities[original].get(at+16,data);
+            data.putFloat(at+28,tailPhase[original]);
             targets[original].get(at+32,data);
             for(int history=0;history<2;history++) {
                 var q=history==0?rotations[original]:previousRotations[original];
@@ -121,6 +124,7 @@ public final class PhysSimulation {
             int at=(model.island[original]*positions.length+model.sorted[original])*GpuPhysKernel.NODE_BYTES;
             positions[original].set(data.getFloat(at),data.getFloat(at+4),data.getFloat(at+8));
             velocities[original].set(data.getFloat(at+16),data.getFloat(at+20),data.getFloat(at+24));
+            tailPhase[original]=data.getFloat(at+28);
             for(int history=0;history<2;history++) {
                 var q=history==0?rotations[original]:previousRotations[original];
                 int rotationAt=at+(history==0?48:224);
@@ -183,6 +187,7 @@ public final class PhysSimulation {
         sampledFrame=!reset && !paused && time>lastTime;
         originX=x;originY=y;originZ=z;world=currentWorld;
         if(reset) {
+            java.util.Arrays.fill(tailPhase,0);
             for(int i=0;i<positions.length;i++) {positions[i].set(targets[i]);velocities[i].zero();rotations[i].identity();previousRotations[i].identity();}
             accumulator=0;initialized=true;
         }
@@ -249,9 +254,24 @@ public final class PhysSimulation {
         for(var joint:activeJoints) {
             if(joint.parent()<0) {positions[joint.bone()].set(targets[joint.bone()]);velocities[joint.bone()].set(frameVelocity);}
             PhysParameters p=joint.parameters();
+            int bone=joint.bone();
+            float motion=Math.min(1,(float)Math.hypot(frameVelocity.x,frameVelocity.z)/2);
+            if(definition.tails[bone]) tailPhase[bone]=(tailPhase[bone]+stepDuration*motion*8)%(float)(Math.PI*2);
             for(int end:joint.outputs()) {
-                Vector3f acceleration=new Vector3f(targets[end]).sub(positions[end]).mul(p.s());
-                acceleration.y-=p.g();
+                Vector3f displacement=new Vector3f(targets[end]).sub(positions[end]);
+                Vector3f acceleration=new Vector3f(displacement).mul(p.s());
+                if(p.gw()==null) acceleration.y-=p.g();
+                else {
+                    // Smooth the well's cusp over one model pixel: zero force at the target,
+                    // constant requested acceleration outside this core, also for repulsive wells.
+                    acceleration.fma(p.gw()/Math.max(1/16f,displacement.length()),displacement);
+                }
+                if(definition.tails[bone] && motion>0) {
+                    float phase=tailPhase[bone]-definition.tailDepth[bone]*0.75f;
+                    Vector3f side=currentRoot.transformDirection(new Vector3f(1,0,0)).normalize();
+                    Vector3f up=currentRoot.transformDirection(new Vector3f(0,1,0)).normalize();
+                    acceleration.fma(6*motion*(float)Math.sin(phase),side).fma(1.5f*motion*(float)Math.sin(phase*2),up);
+                }
                 velocities[end].sub(frameVelocity).mul((float)Math.exp(-p.r()*stepDuration)).add(frameVelocity).fma(stepDuration,acceleration);
                 applyAirDrag(velocities[end],p.air(),stepDuration);
                 positions[end].fma(stepDuration,new Vector3f(velocities[end]).sub(frameVelocity));

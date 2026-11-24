@@ -20,6 +20,8 @@ public final class PhysDefinition {
     public final Joint[] jointByBone;
     public final boolean[] affected;
     final boolean[] physicsScale;
+    final boolean[] tails;
+    final int[] tailDepth;
 
     public PhysDefinition(GeoModel model, Consumer<String> warning) {
         List<Joint> joints=new ArrayList<>();
@@ -40,6 +42,7 @@ public final class PhysDefinition {
             if(warned.add(group)) warning.accept(message);
         };
         int size=bones.size();
+        tails=new boolean[size];tailDepth=new int[size];
         PhysParameters[] parameters=new PhysParameters[size];
         boolean[] physical=new boolean[size], excluded=new boolean[size];
         List<Integer> endList=new ArrayList<>();
@@ -79,6 +82,11 @@ public final class PhysDefinition {
         // Solver and reconstruction must always run in parent-before-child order.
         joints.sort(java.util.Comparator.comparingInt(j -> depth(j.bone)));
         order=java.util.stream.IntStream.range(0,size).boxed().sorted(java.util.Comparator.comparingInt(this::depth)).mapToInt(Integer::intValue).toArray();
+        for(int i:order) {
+            tails[i]=bones.get(i).getName().startsWith("ysmTail");
+            int parent=bones.get(i).parentIdx;
+            if(tails[i] && parent>=0 && tails[parent]) tailDepth[i]=tailDepth[parent]+1;
+        }
         jointByBone=new Joint[size];
         for(Joint joint:joints) jointByBone[joint.bone]=joint;
         affected=new boolean[size];
@@ -141,7 +149,9 @@ public final class PhysDefinition {
         if(parent>=0) parse(parent,parameters,visited,warning);
         String name=bones.get(i).getName();
         if(PhysParameters.isCandidate(name)) try {
-            parameters[i]=PhysParameters.parse(name,parent>=0 && parameters[parent]!=null?parameters[parent]:PhysParameters.DEFAULT);
+            boolean tail=name.startsWith("ysmTail");
+            boolean sameKind=parent>=0 && bones.get(parent).getName().startsWith("ysmTail")==tail;
+            parameters[i]=PhysParameters.parse(name,sameKind && parameters[parent]!=null?parameters[parent]:tail?PhysParameters.TAIL_DEFAULT:PhysParameters.DEFAULT);
         } catch(IllegalArgumentException e) {warning.accept(name+": "+e.getMessage());}
         visited[i]=2;
     }

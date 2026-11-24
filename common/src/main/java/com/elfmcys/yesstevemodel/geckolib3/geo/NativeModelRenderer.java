@@ -63,6 +63,14 @@ public class NativeModelRenderer {
         RenderSystem.getProjectionMatrix().mul(RenderSystem.getModelViewMatrix(), projectionModelViewMatrix);
         boolean isPreview = isPreview();
 
+        if (textureLocation != null && buffer instanceof BufferBuilder
+                && (model.hasGroupStyles || model.isTranslucentTexture(textureIndex))) {
+            if (GroupEffectRenderer.render(pose, model,
+                    boneParams, stateBuffer,
+                    textureIndex, renderPartMask, packedLight, packedOverlay, red, green, blue, alpha,
+                    textureLocation, isPreview)) return;
+        }
+
         // GUI previews, including the HUD paper doll, share deferred buffers and
         // shader state with name tags and other UI. Submit them through that buffer.
         if (isGpuBuffer(buffer, alpha) && isGpuPass(FirstPersonCompat.isFirstPersonActive(), com.elfmcys.yesstevemodel.config.ClientConfigScope.effective(GeneralConfig.USE_GPU_RENDERER_GLOBALLY).get()) && textureLocation != null && NativeLibLoader.isLoaded() && !com.elfmcys.yesstevemodel.config.ClientConfigScope.effective(GeneralConfig.USE_COMPATIBILITY_RENDERER).get() && com.elfmcys.yesstevemodel.config.ClientConfigScope.effective(GeneralConfig.USE_GPU_RENDERER).get()) {
@@ -235,7 +243,7 @@ public class NativeModelRenderer {
         }
     }
 
-    private static Matrix4f calculateBoneMatrix(int idx, java.util.List<GeoModel.BakedBone> bones, float[] boneParams, Matrix4f[] cache, boolean[] visibleCache, Matrix4f rootPose, float[] stateBuffer, Matrix4f modelToCamera) {
+    static Matrix4f calculateBoneMatrix(int idx, java.util.List<GeoModel.BakedBone> bones, float[] boneParams, Matrix4f[] cache, boolean[] visibleCache, Matrix4f rootPose, float[] stateBuffer, Matrix4f modelToCamera) {
         if (cache[idx] != null) return cache[idx];
 
         GeoModel.BakedBone bone = bones.get(idx);

@@ -100,10 +100,16 @@ public class GeoModel {
 
     public net.everla.ysmPhysLib.PhysDefinition ysmPhysics;
 
+    public boolean hasGroupStyles;
+
     public static class BakedBone {
         public String name;
         public boolean glow;
         public boolean facingCameraSubtree;
+        public net.everla.reimaginedysm.gpu.GroupStyle style = net.everla.reimaginedysm.gpu.GroupStyle.NONE;
+        public int surfaceGroup;
+        public int outlineGroup = -1;
+        public int[] averageColors;
 
         // Keep the full skeleton/indexing for animation and physics, but only
         // submit ordinary geometry to the native/GPU caches.
@@ -130,6 +136,7 @@ public class GeoModel {
     }
 
     public static class BakedCube {
+        public boolean closedVolume;
         public boolean cullable = false;
         //        public float pivotX, pivotY, pivotZ;
 //        public float rotX, rotY, rotZ;

@@ -151,8 +151,25 @@ tasks.register('checkYsmPhysics', JavaExec) {
 
 tasks.named('check') { dependsOn 'checkYsmPhysics' }
 
+tasks.register('checkItemThickness', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'com.elfmcys.yesstevemodel.resource.ItemThicknessCheck'
+    enableAssertions = true
+    jvmArgs '-Djava.awt.headless=true'
+}
+tasks.named('check') { dependsOn 'checkItemThickness' }
+
 // Opt-in hardware check: no display/GL dependency is added to the normal check task or release JAR.
 configurations { physicsGpuNatives }
+
+tasks.register('checkGroupEffects', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath + configurations.physicsGpuNatives
+    mainClass = 'net.everla.reimaginedysm.gpu.GroupEffectsCheck'
+    enableAssertions = true
+    systemProperty 'ysm.groupExample', rootProject.file('docs/examples/group-effects-demo').absolutePath
+}
 def physicsNativeOs = System.getProperty('os.name').toLowerCase(Locale.ROOT).contains('win') ? 'windows' : 'linux'
 dependencies {
     physicsGpuNatives "org.lwjgl:lwjgl:3.3.1:natives-${physicsNativeOs}"

@@ -6,7 +6,7 @@ import java.util.ArrayList;
 import java.util.function.ToDoubleFunction;
 
 /** Units: seconds, blocks (gravity), degrees (angle), model pixels (radius). */
-public record PhysParameters(float r, float g, float s, float a, float c, float air, boolean bc,
+public record PhysParameters(float r, float g, Float gw, float s, float a, float c, float air, boolean bc,
                              List<String> disableAnimations, List<Condition> disableVariables,
                              List<String> enableAnimations, List<Condition> enableVariables) {
     public record Condition(String variable, String operator, float value) {
@@ -17,10 +17,11 @@ public record PhysParameters(float r, float g, float s, float a, float c, float 
         }
     }
     /** Baking recipe identity, independent of the experimental mod release version. */
-    public static final String GEOMETRY_CACHE_KEY = "ysmPhysC-solid-without-uv-bc-2";
-    public static final PhysParameters DEFAULT = new PhysParameters(1, 9.8f, 20, 90, 1, 0.5f, false,List.of(),List.of(),List.of(),List.of());
+    public static final String GEOMETRY_CACHE_KEY = "ysmItem-contour-ysmTail-closedVolume-cull-5";
+    public static final PhysParameters DEFAULT = new PhysParameters(1, 9.8f, null, 20, 90, 1, 0.5f, false,List.of(),List.of(),List.of(),List.of());
+    public static final PhysParameters TAIL_DEFAULT = new PhysParameters(10, 0, 3f, 16, 50, 1, 0.5f, false,List.of(),List.of(),List.of(),List.of());
 
-    public PhysParameters(float r, float g, float s, float a, float c, float air) {this(r,g,s,a,c,air,false,List.of(),List.of(),List.of(),List.of());}
+    public PhysParameters(float r, float g, float s, float a, float c, float air) {this(r,g,null,s,a,c,air,false,List.of(),List.of(),List.of(),List.of());}
     public boolean enabled(java.util.function.Predicate<String> animation, ToDoubleFunction<String> values) {
         boolean disable=disableAnimations.stream().anyMatch(animation)||!disableVariables.isEmpty()&&disableVariables.stream().allMatch(c->c.test(values));
         boolean hasEnable=!enableAnimations.isEmpty()||!enableVariables.isEmpty();
@@ -37,7 +38,7 @@ public record PhysParameters(float r, float g, float s, float a, float c, float 
     }
 
     public static boolean isCandidate(String name) {
-        return name.startsWith("ysmPhys") && !name.startsWith("ysmPhysEnd") && !name.startsWith("ysmPhysC");
+        return name.startsWith("ysmTail") || name.startsWith("ysmPhys") && !name.startsWith("ysmPhysEnd") && !name.startsWith("ysmPhysC");
     }
 
     public static PhysParameters parse(String name, PhysParameters parent) {
@@ -45,10 +46,12 @@ public record PhysParameters(float r, float g, float s, float a, float c, float 
         if (at < 0 || at == name.length() - 1 || name.indexOf('@', at + 1) >= 0)
             throw new IllegalArgumentException("expected ysmPhys[#parameters]@name");
         String prefix = name.substring(0, at);
-        if (prefix.equals("ysmPhys")) return parent;
-        if (!prefix.startsWith("ysmPhys#") || prefix.length() == 8)
+        String kind=name.startsWith("ysmTail")?"ysmTail":"ysmPhys";
+        if (prefix.equals(kind)) return parent;
+        if (!prefix.startsWith(kind+"#") || prefix.length() == 8)
             throw new IllegalArgumentException("invalid physics prefix");
         float r = parent.r, g = parent.g, s = parent.s, a = parent.a, c = parent.c, air = parent.air;
+        Float gw=parent.gw;
         boolean bc=parent.bc;
         var da=new ArrayList<>(parent.disableAnimations()); var dv=new ArrayList<>(parent.disableVariables());
         var ea=new ArrayList<>(parent.enableAnimations()); var ev=new ArrayList<>(parent.enableVariables());
@@ -84,7 +87,8 @@ public record PhysParameters(float r, float g, float s, float a, float c, float 
             if (!Float.isFinite(value)) throw new IllegalArgumentException("non-finite parameter");
             switch (key) {
                 case "r" -> r = value;
-                case "g" -> g = value;
+                case "g" -> { g = value; gw = null; }
+                case "gw" -> { gw = value; g = 0; }
                 case "s" -> s = value;
                 case "a" -> a = value;
                 case "c" -> c = value;
@@ -92,9 +96,11 @@ public record PhysParameters(float r, float g, float s, float a, float c, float 
                 default -> throw new IllegalArgumentException("unknown parameter: " + pair[0]);
             }
         }
+        if (seen.contains("g") && seen.contains("gw"))
+            throw new IllegalArgumentException("g and gw cannot coexist");
         if (r < 0 || s < 0 || c < 0 || air < 0 || a < 0 || a > 180)
             throw new IllegalArgumentException("parameter outside supported range");
-        return new PhysParameters(r, g, s, a, c, air, bc,List.copyOf(da),List.copyOf(dv),List.copyOf(ea),List.copyOf(ev));
+        return new PhysParameters(r, g, gw, s, a, c, air, bc,List.copyOf(da),List.copyOf(dv),List.copyOf(ea),List.copyOf(ev));
     }
 
     private static List<String> splitEntries(String text) {

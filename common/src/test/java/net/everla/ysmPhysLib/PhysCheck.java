@@ -14,8 +14,29 @@ import java.util.List;
 public final class PhysCheck {
     private static final Object WORLD=new Object();
     public static void main(String[] args) throws Exception {
-        parser(); conditionalGroups(); movingContacts(); hybridPartition(); airDrag(); topology(); rotations(); collision(); simulation(); cadence(); bodyCollision(); blockCollision(); context(); example(); actualModel(); benchmark();
+        parser(); tail(); conditionalGroups(); movingContacts(); hybridPartition(); airDrag(); gravityWell(); topology(); rotations(); collision(); simulation(); cadence(); bodyCollision(); blockCollision(); context(); example(); actualModel(); benchmark();
         System.out.println("PASS: ysmPhys parser, topology, rigid branches, convex contacts, fixed steps, lifecycle, UI gate and isolation");
+    }
+
+    private static void tail() {
+        var m=model(bone("ysmTail@base",-1,0,0,0),bone("ysmTail@tip",0,0,0,8),bone("ysmPhysEnd@end",1,0,0,16));
+        var d=definition(m);
+        assert d.joints.size()==2 && d.tails[0] && d.tails[1] && d.tailDepth[1]==1;
+        assert d.joints.get(0).parameters().equals(PhysParameters.TAIL_DEFAULT);
+        assert PhysParameters.parse("ysmTail#g=2@tail",PhysParameters.TAIL_DEFAULT).gw()==null;
+        var idle=new PhysSimulation(d);var walk=new PhysSimulation(d);var idlePose=parameters(m);var walkPose=parameters(m);
+        float maximum=0;
+        for(int frame=0;frame<=480;frame++) {
+            double time=frame/120.0;
+            idle.update(idlePose,new Matrix4f(),time,false,WORLD,0,0,0);
+            walk.update(walkPose,new Matrix4f(),time,false,WORLD,0,0,time*2);
+            maximum=Math.max(maximum,Math.abs(walk.position(2).x));
+            assert walk.position(2).isFinite();
+            assert Math.abs(walk.position(1).distance(walk.position(2))-.5f)<1e-4;
+        }
+        assert idle.position(2).distance(new Vector3f(0,0,1))<1e-5 : "idle tail sagged";
+        assert maximum>.01 : "walking did not produce lateral tail sway";
+        System.out.println("PASS: ysmTail topology, inherited defaults, gravity override, idle suspension and walking wave");
     }
 
     private static void conditionalGroups() {
@@ -114,6 +135,15 @@ public final class PhysCheck {
         var p=PhysParameters.parse("ysmPhys#r=2, g=-3, s=4, a=45, c=1@hair",PhysParameters.DEFAULT);
         var inherited=PhysParameters.parse("ysmPhys#g=0@tip",p);
         assert inherited.r()==2 && inherited.g()==0 && inherited.a()==45;
+        assert PhysParameters.DEFAULT.gw()==null && p.gw()==null;
+        var floating=PhysParameters.parse("ysmPhys#gw = 4.5@floating",p);
+        assert floating.gw()==4.5f && floating.g()==0;
+        assert PhysParameters.parse("ysmPhys@child",floating).equals(floating);
+        assert PhysParameters.parse("ysmPhys#r=3@child",floating).gw()==4.5f;
+        var falling=PhysParameters.parse("ysmPhys#g=-2@child",floating);
+        assert falling.gw()==null && falling.g()==-2;
+        assert PhysParameters.parse("ysmPhys#gw=0@child",falling).gw()==0;
+        assert PhysParameters.parse("ysmPhys#gw=-1.5e0@child",floating).gw()==-1.5f;
         assert !PhysParameters.DEFAULT.bc();
         var block=PhysParameters.parse("ysmPhys#bc=true@root",PhysParameters.DEFAULT);
         assert block.bc() && PhysParameters.parse("ysmPhys@child",block).bc();
@@ -122,10 +152,42 @@ public final class PhysCheck {
         for(String invalid:List.of("ysmPhys", "ysmPhys@", "ysmPhys#@hair", "ysmPhys#x=1@hair", "ysmPhys#r=1,r=2@hair",
                 "ysmPhys#r=NaN@hair", "ysmPhys#g=Infinity@hair", "ysmPhys#c=-1@hair", "ysmPhys#air=-1@hair", "ysmPhys#air=NaN@hair", "ysmPhys#a=181@hair",
                 "ysmPhys#r=1,@hair", "ysmPhys@hair@bad", "ysmPhys#bc=1@hair", "ysmPhys#bc=0@hair",
-                "ysmPhys#bc=yes@hair", "ysmPhys#bc=@hair", "ysmPhys#bc=true,bc=false@hair")) {
+                "ysmPhys#bc=yes@hair", "ysmPhys#bc=@hair", "ysmPhys#bc=true,bc=false@hair",
+                "ysmPhys#gw=NaN@hair", "ysmPhys#gw=Infinity@hair", "ysmPhys#gw=1e99@hair", "ysmPhys#gw=@hair",
+                "ysmPhys#gw=1,gw=2@hair", "ysmPhys#g=0,gw=1@hair", "ysmPhys#gw=0,g=1@hair")) {
             try {PhysParameters.parse(invalid,p);throw new AssertionError("accepted "+invalid);}
             catch(IllegalArgumentException expected) {}
         }
+    }
+
+    private static void gravityWell() {
+        assert run(60,180,"gw=4.5,s=0,a=180").distance(new Vector3f(1,0,0))<1e-6 : "hover applied downward gravity at its target";
+        for(float length:new float[]{1,2}) for(float strength:new float[]{0,4.5f,-4.5f}) {
+            var m=model(bone("ysmPhys#gw="+strength+",s=0,r=4,air=0,a=180@root",-1,0,0,0),bone("ysmPhysEnd@end",0,16*length,0,0));
+            var sim=new PhysSimulation(definition(m));var p=parameters(m);
+            sim.update(p,new Matrix4f(),0,false,WORLD,0,0,0);
+            var root=new Matrix4f().rotateXYZ(.3f,-.4f,.6f);
+            var start=new Vector3f(length,0,0);var target=root.transformPosition(new Vector3f(start));
+            var expected=new Vector3f(start).fma(strength*PhysSimulation.STEP*PhysSimulation.STEP,new Vector3f(target).sub(start).normalize()).normalize(length);
+            sim.update(p,root,1.0/120,false,WORLD,0,0,0);
+            assert sim.position(1).distance(expected)<1e-5 : "gw is not the specified 3D acceleration: "+sim.position(1)+" vs "+expected;
+            float jitter=0;
+            for(int frame=2;frame<=1440;frame++) {
+                var previous=new Vector3f(sim.position(1));
+                sim.update(p,root,frame/120.0,false,WORLD,0,0,0);
+                if(frame>1200) jitter=Math.max(jitter,previous.distance(sim.position(1)));
+            }
+            var tip=sim.position(1);
+            assert tip.isFinite() && Math.abs(tip.length()-length)<1e-5 : "gw violated rigid length";
+            if(strength>0) assert tip.distance(target)<.02f : "gw did not return to the animation target: "+tip.distance(target);
+            if(strength>0) assert jitter<1e-5f:"resting gravity well sustained jitter: "+jitter;
+            else if(strength==0) assert tip.distance(start)<1e-5 : "gw=0 retained gravity or attraction";
+            else assert tip.distance(target)>1.9f*length : "negative gw did not repel";
+        }
+        var invalid=model(bone("ysmPhys#g=9.8,gw=4.5@root",-1,0,0,0),bone("ysmPhysEnd@end",0,16,0,0));
+        List<String> warnings=new ArrayList<>();
+        assert new PhysDefinition(invalid,warnings::add).joints.isEmpty() && warnings.size()==1 && warnings.get(0).contains("cannot coexist");
+        System.out.println("PASS: gw default/validation/inheritance, g mutual exclusion, signed 3D acceleration, animation target hover and rigid length");
     }
 
     private static void airDrag() {

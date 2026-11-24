@@ -72,12 +72,15 @@ public class YSMClientMapper {
         private static final int TILE_SIZE = 8;
         private final AlphaIndex[] indexes;
         private final boolean[] results;
+        private BufferedImage[] colorImages;
 
         public static final int FLAG_VISIBLE = 1;
         public static final int FLAG_HAS_HOLE = 2;
         public static final int FLAG_TRANSLUCENT = 4;
+        public static final int FLAG_EMPTY = 8;
 
         public TranslucencyScanner(BufferedImage[] images, int expectedCount) {
+            this.colorImages = images;
             this.indexes = new AlphaIndex[images.length];
             for (int i = 0; i < images.length; i++) {
                 if (images[i] != null) {
@@ -93,11 +96,59 @@ public class YSMClientMapper {
         }
 
         public TranslucencyScanner fork(int expectedCount) {
-            return new TranslucencyScanner(indexes, expectedCount);
+            var scanner = new TranslucencyScanner(indexes, expectedCount);
+            scanner.colorImages = colorImages;
+            return scanner;
+        }
+
+        int[] averageColors(List<GeoModel.BakedBone> bones, int group) {
+            int[] colors=new int[results.length];
+            java.util.Arrays.fill(colors,0x181818);
+            if(colorImages==null) return colors;
+            for(int t=0;t<colorImages.length;t++) {
+                BufferedImage image=colorImages[t]; if(image==null) continue;
+                double r=0,g=0,b=0,weight=0;
+                for(var bone:bones) if(bone.outlineGroup==group) for(var cube:bone.cubes) for(var q:cube.quads) {
+                    var p=q.positions;
+                    var e1=new org.joml.Vector3f(p[3]-p[0],p[4]-p[1],p[5]-p[2]);
+                    var e2=new org.joml.Vector3f(p[9]-p[0],p[10]-p[1],p[11]-p[2]);
+                    double area=e1.cross(e2).length()/64.0;
+                    for(int y=0;y<8;y++) for(int x=0;x<8;x++) {
+                        float u=(x+.5f)/8,v=(y+.5f)/8;
+                        float tu=q.uvs[0]+u*(q.uvs[2]-q.uvs[0])+v*(q.uvs[6]-q.uvs[0]);
+                        float tv=q.uvs[1]+u*(q.uvs[3]-q.uvs[1])+v*(q.uvs[7]-q.uvs[1]);
+                        int rgb=image.getRGB(Math.floorMod((int)Math.floor(tu*image.getWidth()),image.getWidth()),
+                                Math.floorMod((int)Math.floor(tv*image.getHeight()),image.getHeight()));
+                        double w=(rgb>>>24)/255.0*area;
+                        weight+=w;r+=((rgb>>16)&255)*w;g+=((rgb>>8)&255)*w;b+=(rgb&255)*w;
+                    }
+                }
+                if(weight>0) {
+                    double red=r/weight,green=g/weight,blue=b/weight;
+                    double gray=.2126*red+.7152*green+.0722*blue;
+                    colors[t]=((int)((gray+(red-gray)*.55)*.25)<<16)
+                            |((int)((gray+(green-gray)*.55)*.25)<<8)
+                            |(int)((gray+(blue-gray)*.55)*.25);
+                }
+            }
+            return colors;
         }
 
         public boolean[] getResults() {
             return results;
+        }
+
+        int itemWidth() { return java.util.Arrays.stream(indexes).filter(java.util.Objects::nonNull).mapToInt(i->i.width).max().orElse(0); }
+        int itemHeight() { return java.util.Arrays.stream(indexes).filter(java.util.Objects::nonNull).mapToInt(i->i.height).max().orElse(0); }
+        boolean itemPixel(float u,float v) {
+            boolean valid=false;
+            for(var index:indexes) if(index!=null) {
+                valid=true;
+                int x=Math.max(0,Math.min(index.width-1,(int)(u*index.width)));
+                int y=Math.max(0,Math.min(index.height-1,(int)(v*index.height)));
+                if((index.pixelFlags[y*index.width+x]&FLAG_VISIBLE)!=0) return true;
+            }
+            return !valid;
         }
 
         public int scan(RawYsmModel.RawFace face) {
@@ -114,6 +165,7 @@ public class YSMClientMapper {
             boolean hasVisible = false;
             boolean hasHole = false;
             boolean hasTranslucent = false;
+            boolean hasEmpty = false;
 
             for (int i = 0; i < indexes.length; i++) {
                 AlphaIndex index = indexes[i];
@@ -140,6 +192,7 @@ public class YSMClientMapper {
                 hasVisible |= (flags & FLAG_VISIBLE) != 0;
                 hasHole |= (flags & FLAG_HAS_HOLE) != 0;
                 hasTranslucent |= (flags & FLAG_TRANSLUCENT) != 0;
+                hasEmpty |= (flags & FLAG_EMPTY) != 0;
 
                 if (hasTranslucent) results[i] = true;
             }
@@ -150,6 +203,7 @@ public class YSMClientMapper {
             if (hasVisible) mask |= FLAG_VISIBLE;
             if (hasHole) mask |= FLAG_HAS_HOLE;
             if (hasTranslucent) mask |= FLAG_TRANSLUCENT;
+            if (hasEmpty) mask |= FLAG_EMPTY;
             return mask;
         }
 
@@ -162,6 +216,7 @@ public class YSMClientMapper {
             private final int[] visiblePrefix;
             private final int[] holePrefix;
             private final int[] translucentPrefix;
+            private final int[] emptyPrefix;
 
             private AlphaIndex(BufferedImage image) {
                 this.width = image.getWidth();
@@ -187,11 +242,13 @@ public class YSMClientMapper {
                 this.visiblePrefix = new int[prefixSize];
                 this.holePrefix = new int[prefixSize];
                 this.translucentPrefix = new int[prefixSize];
+                this.emptyPrefix = new int[prefixSize];
 
                 for (int tileY = 0; tileY < tileRows; tileY++) {
                     int visibleCount = 0;
                     int holeCount = 0;
                     int translucentCount = 0;
+                    int emptyCount = 0;
                     int tileRowOffset = tileY * tileColumns;
                     int prefixRowOffset = (tileY + 1) * prefixStride;
                     int previousPrefixRowOffset = tileY * prefixStride;
@@ -201,11 +258,13 @@ public class YSMClientMapper {
                         if ((flags & FLAG_VISIBLE) != 0) visibleCount++;
                         if ((flags & FLAG_HAS_HOLE) != 0) holeCount++;
                         if ((flags & FLAG_TRANSLUCENT) != 0) translucentCount++;
+                        if ((flags & FLAG_EMPTY) != 0) emptyCount++;
 
                         int prefixIndex = prefixRowOffset + tileX + 1;
                         visiblePrefix[prefixIndex] = visiblePrefix[previousPrefixRowOffset + tileX + 1] + visibleCount;
                         holePrefix[prefixIndex] = holePrefix[previousPrefixRowOffset + tileX + 1] + holeCount;
                         translucentPrefix[prefixIndex] = translucentPrefix[previousPrefixRowOffset + tileX + 1] + translucentCount;
+                        emptyPrefix[prefixIndex] = emptyPrefix[previousPrefixRowOffset + tileX + 1] + emptyCount;
                     }
                 }
             }
@@ -226,16 +285,16 @@ public class YSMClientMapper {
                         fullStartY / TILE_SIZE,
                         fullEndY / TILE_SIZE
                 );
-                if (flags == FLAG_VISIBLE + FLAG_HAS_HOLE + FLAG_TRANSLUCENT) return flags;
+                if (flags == FLAG_VISIBLE + FLAG_HAS_HOLE + FLAG_TRANSLUCENT + FLAG_EMPTY) return flags;
 
                 flags = scanPixels(startX, endX, startY, fullStartY - 1, flags);
-                if (flags == FLAG_VISIBLE + FLAG_HAS_HOLE + FLAG_TRANSLUCENT) return flags;
+                if (flags == FLAG_VISIBLE + FLAG_HAS_HOLE + FLAG_TRANSLUCENT + FLAG_EMPTY) return flags;
 
                 flags = scanPixels(startX, endX, fullEndY, endY, flags);
-                if (flags == FLAG_VISIBLE + FLAG_HAS_HOLE + FLAG_TRANSLUCENT) return flags;
+                if (flags == FLAG_VISIBLE + FLAG_HAS_HOLE + FLAG_TRANSLUCENT + FLAG_EMPTY) return flags;
 
                 flags = scanPixels(startX, fullStartX - 1, fullStartY, fullEndY - 1, flags);
-                if (flags == FLAG_VISIBLE + FLAG_HAS_HOLE + FLAG_TRANSLUCENT) return flags;
+                if (flags == FLAG_VISIBLE + FLAG_HAS_HOLE + FLAG_TRANSLUCENT + FLAG_EMPTY) return flags;
 
                 return scanPixels(fullEndX, endX, fullStartY, fullEndY - 1, flags);
             }
@@ -251,6 +310,7 @@ public class YSMClientMapper {
                 if (prefixCount(translucentPrefix, startTileX, endTileX, startTileY, endTileY) > 0) {
                     flags |= FLAG_TRANSLUCENT;
                 }
+                if (prefixCount(emptyPrefix, startTileX, endTileX, startTileY, endTileY) > 0) flags |= FLAG_EMPTY;
                 return flags;
             }
 
@@ -269,14 +329,14 @@ public class YSMClientMapper {
                     int rowOffset = y * width;
                     for (int x = startX; x <= endX; x++) {
                         flags |= pixelFlags[rowOffset + x];
-                        if (flags == FLAG_VISIBLE + FLAG_HAS_HOLE + FLAG_TRANSLUCENT) return flags;
+                        if (flags == FLAG_VISIBLE + FLAG_HAS_HOLE + FLAG_TRANSLUCENT + FLAG_EMPTY) return flags;
                     }
                 }
                 return flags;
             }
 
             private static int flagsForAlpha(int alpha) {
-                if (alpha == 0) return FLAG_HAS_HOLE;
+                if (alpha == 0) return FLAG_HAS_HOLE | FLAG_EMPTY;
                 if (alpha == 255) return FLAG_VISIBLE;
                 return FLAG_VISIBLE | FLAG_HAS_HOLE | FLAG_TRANSLUCENT;
             }
@@ -443,7 +503,7 @@ public class YSMClientMapper {
             return buildMesh(new GeoBone[0], new HashMap<>(), context, fallbackArray);
         }
 
-        boolean hasPhysics = rawGeo.bones.stream().anyMatch(b -> b.name.startsWith("ysmPhys"));
+        boolean hasPhysics = rawGeo.bones.stream().anyMatch(b -> net.everla.ysmPhysLib.PhysParameters.isCandidate(b.name));
         List<GeoBone> geoBones = new ArrayList<>();
         List<GeoModel.BakedBone> bakedBones = new ArrayList<>();
         Map<String, String> parentMap = new HashMap<>();
@@ -465,6 +525,13 @@ public class YSMClientMapper {
 
             boolean forceCull = allCutout;
 
+            boolean item=rb.name.startsWith("ysmItem@");
+            RawYsmModel.RawFace itemFace=null;
+            if(item && rb.cubes.size()==1) {
+                var faces=rb.cubes.get(0).faces.stream().filter(ItemThickness::hasUv).toList();
+                if(faces.size()==1) itemFace=faces.get(0);
+            }
+            if(item && itemFace==null) com.elfmcys.yesstevemodel.YesSteveModel.LOGGER.warn("[ysmItem] {}: expected exactly one cube with one UV face",rb.name);
             for (RawYsmModel.RawCube rc : rb.cubes) {
                 if (hasPhysics) {
                     float[] physicsFaces = new float[rc.faces.size() * 12];
@@ -478,13 +545,21 @@ public class YSMClientMapper {
                     bb.physicsFaces.add(physicsFaces);
                 }
                 GeoModel.BakedCube bc = new GeoModel.BakedCube();
+                if(itemFace!=null) {
+                    bc=ItemThickness.bake(itemFace,scanner,rawGeo.textureWidth,rawGeo.textureHeight);
+                    if(!bc.quads.isEmpty()) bb.cubes.add(bc);
+                    continue;
+                }
                 int validFaceCount = 0;
                 boolean cubeHasHole = false;
+                boolean cubeHasEmpty = false;
 
                 for (RawYsmModel.RawFace rf : rc.faces) {
+                    if(item && !ItemThickness.hasUv(rf)) continue;
                     if (net.everla.ysmPhysLib.PhysParameters.isCollider(rb.name)
                             && java.util.Arrays.stream(new double[]{rf.u[0],rf.u[1],rf.u[2],rf.u[3],rf.v[0],rf.v[1],rf.v[2],rf.v[3]}).allMatch(uv -> uv == -1)) continue;
                     int faceState = scanner != null ? scanner.scan(rf) : TranslucencyScanner.FLAG_VISIBLE;
+                    cubeHasEmpty |= (faceState & TranslucencyScanner.FLAG_EMPTY) != 0;
 
                     if ((faceState & TranslucencyScanner.FLAG_VISIBLE) == 0) {
                         continue;
@@ -546,6 +621,10 @@ public class YSMClientMapper {
                     bc.cullable = validFaceCount >= 5;
                 }
 
+                bc.closedVolume = validFaceCount == 6 && !isZeroThickness && !cubeHasEmpty;
+                // Semi-transparent coverage is not a hole: closed solids only show their front shell.
+                bc.cullable |= bc.closedVolume;
+
                 if (!bc.quads.isEmpty()) {
                     bb.cubes.add(bc);
                 }
@@ -574,11 +653,39 @@ public class YSMClientMapper {
         GeoModel mesh = buildMesh(geoBones.toArray(new GeoBone[0]), parentMap, context, translucencyArray);
 
         mesh.bakedBones = bakedBones;
+        boolean[] styled = new boolean[bakedBones.size()];
+        for(int i=0;i<bakedBones.size();i++) resolveGroupStyle(bakedBones,i,styled);
+        mesh.hasGroupStyles=bakedBones.stream().anyMatch(b -> b.style.cosmic() || b.style.outline());
+        if(scanner!=null) for(int i=0;i<bakedBones.size();i++) {
+            var bone=bakedBones.get(i);
+            if(bone.outlineGroup==i) bone.averageColors=scanner.averageColors(bakedBones,i);
+        }
         GeoModel.classifyFacingCameraBones(bakedBones);
         if (hasPhysics) mesh.ysmPhysics = new net.everla.ysmPhysLib.PhysDefinition(mesh,
                 message -> com.elfmcys.yesstevemodel.YesSteveModel.LOGGER.warn("[ysmPhys] {}: {}", rawGeo.identifier, message));
         if (NativeLibLoader.isLoaded()) mesh.buildNativeCache();
         return mesh;
+    }
+
+    private static void resolveGroupStyle(List<GeoModel.BakedBone> bones,int i,boolean[] done) {
+        if(done[i]) return;
+        var bone=bones.get(i);
+        var parent=net.everla.reimaginedysm.gpu.GroupStyle.NONE;
+        bone.surfaceGroup=i;
+        if(bone.parentIdx>=0) {
+            resolveGroupStyle(bones,bone.parentIdx,done);
+            var p=bones.get(bone.parentIdx);parent=p.style;
+            bone.outlineGroup=p.outlineGroup;
+            if(parent.cosmic() || parent.outline()) bone.surfaceGroup=p.surfaceGroup;
+        }
+        try { bone.style=net.everla.reimaginedysm.gpu.GroupStyle.parse(bone.name,parent); }
+        catch(IllegalArgumentException ex) {
+            bone.style=parent;
+            com.elfmcys.yesstevemodel.YesSteveModel.LOGGER.warn("[group style] {}: {}",bone.name,ex.getMessage());
+        }
+        if(bone.name.startsWith("ysmOutline") && bone.style!=parent) bone.outlineGroup=i;
+        if(bone.style!=parent) bone.surfaceGroup=i;
+        done[i]=true;
     }
 
     private static Map<String, Animation> buildAnimations(RawYsmModel.RawAnimationFile animFile, boolean mergeMultilineExpr) {

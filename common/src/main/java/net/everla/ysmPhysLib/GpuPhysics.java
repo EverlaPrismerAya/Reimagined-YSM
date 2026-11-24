@@ -28,7 +28,7 @@ public final class GpuPhysics {
     private static final Set<String> logged=new HashSet<>();
     private static final Map<PhysDefinition,Timings> timings=new WeakHashMap<>();
     private static String shaderFailure;
-    private static String lastReason="experimental GPU physics disabled";
+    private static String lastReason="GPU physics disabled";
     private GpuPhysics() {}
 
     public static String getLastReason() {return lastReason;}
@@ -37,7 +37,7 @@ public final class GpuPhysics {
     static boolean prepare(AnimatedGeoModel owner,Matrix4f root,double time,boolean paused,Object world,
                            double x,double y,double z,int fps,boolean textured,java.util.function.Function<net.minecraft.world.phys.AABB,Iterable<net.minecraft.world.phys.shapes.VoxelShape>> blockCollisions) {
         float[] parameters=owner.getMatrixData();
-        if(!PhysConfig.gpuEnabled()) {lastReason="experimental GPU physics disabled";deactivate(parameters);return false;}
+        if(!PhysConfig.gpuEnabled()) {lastReason="GPU physics disabled";deactivate(parameters);return false;}
         String reason=null;
         if(net.everla.reimaginedysm.compat.firstperson.FirstPersonCompat.isFirstPersonActive()) reason="FirstPerson body uses CPU rendering and physics";
         else if(!textured || ClientConfigScope.effective(GeneralConfig.USE_COMPATIBILITY_RENDERER).get()
@@ -118,10 +118,40 @@ public final class GpuPhysics {
         var instance=instances.get(parameters);
         if(instance==null) return;
         var owner=instance.owner.get();
+        // Even buffered draws must advance an instance that just acquired GPU ownership.
+        // Otherwise prepare invalidates CPU state every frame and fallback only draws reset poses.
+        if(!Double.isFinite(instance.drawn)) try(var saved=new GpuPhysKernel.SavedState()) {
+            instance.draw(parameters,new Matrix4f(),0);
+        } catch(Exception | LinkageError e) {report("GPU buffered handoff dispatch failed: "+e.getMessage());}
         deactivate(parameters);
         if(owner!=null) {
             owner.ysmPhysics.setFrameRate(instance.fps);
             owner.ysmPhysics.update(parameters,instance.root,instance.time,instance.paused,instance.world,instance.x,instance.y,instance.z,instance.blockCollisions);
+        }
+    }
+
+    /** Material clipping needs CPU-readable current matrices, but the solver retains GPU ownership. */
+    public static boolean readRenderMatrices(float[] parameters,Matrix4f root,int light,
+                                              Matrix4f[] matrices,boolean[] visible) {
+        if(!active(parameters)) return false;
+        int buffer=render(parameters,root,light);
+        if(buffer==0) return false;
+        var instance=instances.get(parameters);
+        var data=org.lwjgl.system.MemoryUtil.memAlloc(matrices.length*144);
+        int previous=org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL43.GL_SHADER_STORAGE_BUFFER_BINDING);
+        try {
+            org.lwjgl.opengl.GL42.glMemoryBarrier(org.lwjgl.opengl.GL43.GL_BUFFER_UPDATE_BARRIER_BIT);
+            GL15.glBindBuffer(org.lwjgl.opengl.GL43.GL_SHADER_STORAGE_BUFFER,buffer);
+            GL15.glGetBufferSubData(org.lwjgl.opengl.GL43.GL_SHADER_STORAGE_BUFFER,0,data);
+            for(int sorted=0;sorted<matrices.length;sorted++) {
+                int original=instance.kernel.model.original[sorted];
+                matrices[original]=new Matrix4f(data.asFloatBuffer().position(sorted*36));
+                visible[original]=data.getInt(sorted*144+132)==0;
+            }
+            return true;
+        } finally {
+            GL15.glBindBuffer(org.lwjgl.opengl.GL43.GL_SHADER_STORAGE_BUFFER,previous);
+            org.lwjgl.system.MemoryUtil.memFree(data);
         }
     }
 

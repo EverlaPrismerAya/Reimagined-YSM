@@ -1,0 +1,8 @@
+Avaritia Cosmic shader resources
+Upstream: https://github.com/Morpheus1101/Avaritia
+Commit: 07ce275b46e8afe4d932a0178777591794d7f612
+Original sprites: src/main/resources/assets/avaritia/textures/shader/cosmic_0.png through cosmic_9.png
+Original animation metadata: matching .png.mcmeta files (unmodified)
+Original algorithm: src/main/resources/assets/avaritia/shader/cosmic.frag
+Adapted shader: /group_cosmic.fsh (GLSL 150 inputs, texture array, configurable layer mixing, model alpha mask)
+Attribution: Avaritia contributors. This file records provenance and does not relicense upstream resources.
