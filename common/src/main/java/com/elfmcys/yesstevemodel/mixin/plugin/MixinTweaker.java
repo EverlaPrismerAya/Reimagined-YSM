@@ -21,6 +21,11 @@ public class MixinTweaker implements IMixinConfigPlugin {
 
     @Keep
     public boolean shouldApplyMixin(String str, String str2) {
+        // This bridge removes foreign references to official YSM's obfuscated
+        // classes. It must remain installed even when our renderer is disabled.
+        if (str2.equals("com.elfmcys.yesstevemodel.forge.mixin.client.esotericspell.RisingRingYsmCompatMixin")) {
+            return true;
+        }
         if (str2.equals("com.elfmcys.yesstevemodel.mixin.client.RandomFramerateMixin")) {
             return com.elfmcys.yesstevemodel.RuntimePolicy.isDisabled();
         }

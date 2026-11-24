@@ -19,6 +19,7 @@ public abstract class RisingRingYsmCompatMixin {
      */
     @Overwrite(remap = false)
     public static LivingEntity getRenderedEntity(Object animatable) {
+        if (com.elfmcys.yesstevemodel.RuntimePolicy.isDisabled()) return null;
         return animatable instanceof AnimatableEntity<?> model && model.getEntity() instanceof LivingEntity entity
                 ? entity : null;
     }
@@ -29,6 +30,7 @@ public abstract class RisingRingYsmCompatMixin {
      */
     @Overwrite(remap = false)
     public static boolean hasActiveModel(LivingEntity entity) {
+        if (com.elfmcys.yesstevemodel.RuntimePolicy.isDisabled()) return false;
         return entity instanceof Player player
                 && PlayerCapability.get(player).map(PlayerCapability::isModelActive).orElse(false);
     }
@@ -39,6 +41,7 @@ public abstract class RisingRingYsmCompatMixin {
      */
     @Overwrite(remap = false)
     public static Scale readScale(LivingEntity entity) {
+        if (com.elfmcys.yesstevemodel.RuntimePolicy.isDisabled()) return Scale.DEFAULT;
         if (!(entity instanceof Player player)) return Scale.DEFAULT;
         return PlayerCapability.get(player).filter(PlayerCapability::isModelActive)
                 .map(cap -> new Scale(Mth.clamp(cap.getHeightScale(), 0.1F, 10.0F),
