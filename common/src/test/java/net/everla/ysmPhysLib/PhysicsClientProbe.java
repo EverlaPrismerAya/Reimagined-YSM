@@ -279,6 +279,9 @@ public final class PhysicsClientProbe {
                             new com.mojang.blaze3d.vertex.BufferBuilder(256),drawPose.last(),owner.getGeoModel(),owner.getMatrixData(),
                             owner.getAbsPivotData(),0,0,net.minecraft.client.renderer.LevelRenderer.getLightColor(client.level,adapter.entity.blockPosition()),net.minecraft.client.renderer.texture.OverlayTexture.NO_OVERLAY,
                             1,1,1,1,visualTexture);
+                    if(Boolean.getBoolean("ysm.accessoryShaderProbe"))
+                        Class.forName("net.everla.ysmprobe.AccessoryProbe").getMethod("render",Object.class,com.mojang.blaze3d.vertex.PoseStack.class,int.class,float.class)
+                                .invoke(null,adapter,drawPose,net.minecraft.client.renderer.LevelRenderer.getLightColor(client.level,adapter.entity.blockPosition()),worldPartialTick);
                     int error=GL11.glGetError();
                     if(error!=GL11.GL_NO_ERROR) throw new AssertionError("Group shader GL error 0x"+Integer.toHexString(error));
                 } finally {WorldPhysicsContext.end();}

@@ -287,8 +287,13 @@ public final class GoetyAccessoryLayer extends GeoLayerRenderer<CustomPlayerEnti
                 com.elfmcys.yesstevemodel.YesSteveModel.LOGGER.warn("GR halo animation API failed", e);
             }
         }
-        halo.render(poses, buffers.getBuffer(RenderType.energySwirl(new ResourceLocation("goety_revelation",
-                "textures/entity/player/" + texture + ".png"), 1, 1)), light, OverlayTexture.NO_OVERLAY);
+        var haloTexture = new ResourceLocation("goety_revelation", "textures/entity/player/" + texture + ".png");
+        // A free-standing halo is geometry, not an overlay on an existing surface.
+        // Deferred packs need its own depth, rather than the player's/world's depth.
+        boolean shaders = net.everla.reimaginedysm.compat.oculus.OculusCompat.isShaderPackInUse();
+        var type = shaders
+                ? RenderType.entityTranslucent(haloTexture) : RenderType.energySwirl(haloTexture, 1, 1);
+        halo.render(poses, buffers.getBuffer(type), shaders ? 15728880 : light, OverlayTexture.NO_OVERLAY);
     }
 
 }
