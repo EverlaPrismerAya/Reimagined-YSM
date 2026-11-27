@@ -12,17 +12,22 @@ public final class ScriptChecks {
         return new ScriptBundle(Map.of("rysm/manifest.json","{\"version\":1,\"scripts\":[\"scripts/main.js\"]}".getBytes(StandardCharsets.UTF_8),"rysm/scripts/main.js",js.getBytes(StandardCharsets.UTF_8)));
     }
     public static void main(String[] args) throws Exception {
-        var bundle=bundle("Rysm.group('cape',{physics:{g:9.8}}); Rysm.molang('sum',(ctx,a,b)=>a+b,{fallback:7}); Rysm.molang('isolated',ctx=>{ctx.state.n=(ctx.state.n||0)+1;return ctx.state.n;}); Rysm.molang('permissions',ctx=>typeof java==='undefined' && typeof Packages==='undefined'); Rysm.molang('loop',ctx=>{while(true){}},{fallback:9});");
+        var bundle=bundle("Rysm.group('cape',{physics:{g:9.8}}); Rysm.molang('sum',(game,a,b)=>a+b,{fallback:7}); Rysm.molang('isolated',game=>{game.model.state.n=(game.model.state.n||0)+1;return game.model.state.n;}); Rysm.molang('permissions',game=>typeof java==='undefined' && typeof Packages==='undefined'); Rysm.molang('loop',game=>{while(true){}},{fallback:9});");
         var logging=new ScriptRuntime(bundle("Rysm.logKeyBindings();Rysm.logKeyBindings();"));
         check(logging.logKeyBindingsRequested,"Registration requests a single model-load key listing");
-        var deferredLogging=new ScriptRuntime(bundle("Rysm.molang('log',ctx=>{Rysm.logKeyBindings();return 1;});"));
+        var deferredLogging=new ScriptRuntime(bundle("Rysm.molang('log',game=>{Rysm.logKeyBindings();return 1;});"));
         check(deferredLogging.evaluate("log",new Object[0],cx->deferredLogging.snapshot(Map.of()))==1&&!deferredLogging.logKeyBindingsRequested,"Runtime callbacks cannot request repeated key listings");
+        var printed=new ArrayList<String>();
+        var printing=new ScriptRuntime(bundle("Rysm.model('tick',game=>{game.model.state.n=(game.model.state.n||0)+1;game.print('value',game.model.state.n,{active:true});});"));
+        printing.callbacks(false,cx->printing.game(printed::add));
+        printing.callbacks(false,cx->printing.game(printed::add));
+        check(printed.equals(List.of("value 1 {\"active\":true}","value 2 {\"active\":true}")),"Chat formats values and persists model state");
         var a=new ScriptRuntime(bundle);var b=new ScriptRuntime(bundle);
         check(a.evaluate("sum",new Object[]{2,3},cx->a.snapshot(Map.of()))==5,"Numeric arguments");
         check(a.evaluate("sum",new Object[]{Double.NaN},cx->a.snapshot(Map.of()))==7,"Non-finite argument fallback");
-        check(a.evaluate("isolated",new Object[]{},cx->a.snapshot(Map.of("state",a.state())))==1,"First state");
-        check(a.evaluate("isolated",new Object[]{},cx->a.snapshot(Map.of("state",a.state())))==2,"Persistent state");
-        check(b.evaluate("isolated",new Object[]{},cx->b.snapshot(Map.of("state",b.state())))==1,"Instance isolation");
+        check(a.evaluate("isolated",new Object[]{},cx->a.snapshot(Map.of("model",Map.of("state",a.state()))))==1,"First state");
+        check(a.evaluate("isolated",new Object[]{},cx->a.snapshot(Map.of("model",Map.of("state",a.state()))))==2,"Persistent state");
+        check(b.evaluate("isolated",new Object[]{},cx->b.snapshot(Map.of("model",Map.of("state",b.state()))))==1,"Instance isolation");
         check(a.evaluate("permissions",new Object[]{},cx->a.snapshot(Map.of()))==1,"Host classes hidden");
         check(a.evaluate("loop",new Object[]{},cx->a.snapshot(Map.of()))==9,"Instruction budget");
         ScriptInput.event("key.keyboard.escape",1);ScriptInput.event("key.keyboard.escape",0);ScriptInput.advance(true);
@@ -30,7 +35,7 @@ public final class ScriptChecks {
         check(!ScriptInput.get("key.keyboard.escape",false,false).pressed(),"Remote input isolation");
         ScriptInput.advance(true);check(!ScriptInput.get("key.keyboard.escape",false,true).pressed(),"Input edge reset");
         ScriptInput.event("key.keyboard.escape",1);ScriptInput.advance(false);check(!ScriptInput.get("key.keyboard.escape",false,true).down(),"Focus loss releases input");
-        var limits=new ScriptRuntime(bundle("Rysm.molang('array',ctx=>new Array(1000000000),{fallback:3});Rysm.molang('string',ctx=>'x'.repeat(1000000000),{fallback:4});"));
+        var limits=new ScriptRuntime(bundle("Rysm.molang('array',game=>new Array(1000000000),{fallback:3});Rysm.molang('string',game=>'x'.repeat(1000000000),{fallback:4});"));
         check(limits.evaluate("array",new Object[0],cx->limits.snapshot(Map.of()))==3,"Array allocation limit");
         check(limits.evaluate("string",new Object[0],cx->limits.snapshot(Map.of()))==4,"String allocation limit");
         var restored=ScriptBundle.read(bundle.archive());check(restored.digest.equals(bundle.digest),"7z round trip");
@@ -39,18 +44,67 @@ public final class ScriptChecks {
         check(ScriptResources.replaceCalls("'rysmjs.sum()'",Map.of()).equals("'rysmjs.sum()'"),"String literal unchanged");
         check(ScriptMigration.properties("ysmPhys#g=2,enable=(walk,run)@cape").getAsJsonObject("physics").get("enable").getAsString().equals("(walk,run)"),"Migration parameter nesting");
         check(ScriptMigration.properties("ysmItem@paper").get("item").getAsBoolean(),"Item migration coverage");
+        modelEvents();
+        fluentGroups();
         synchronization();
         functionFallbacks();
-        if(args.length>0){examples(Path.of(args[0]));migration(Path.of(args[0]));}
+        if(args.length>0 && !args[0].startsWith("--")){examples(Path.of(args[0]));migration(Path.of(args[0]));}
         if(Arrays.asList(args).contains("--gpu"))gpu();
         System.out.println("RYSM script checks passed");
+    }
+    private static void modelEvents() throws Exception {
+        String source="// preserve this header\nRysm.logKeyBindings();Rysm.cosmic('crosses',{textures:['cross.png']});Rysm.update(game=>{game.model.state.ticks=(game.model.state.ticks||0)+1;});Rysm.molang('counter',game=>game.model.state.ticks||0,{fallback:0,sync:true});Rysm.molang('sum',(game,a,b)=>a+b,{fallback:7});Rysm.pose(game=>{game.model.state.posed=true;});";
+        String converted=ScriptSyntaxMigration.convert(source);
+        check(converted.contains("Rysm.model('load'")&&converted.contains("Rysm.model('cosmic'")&&converted.contains("Rysm.model('molang'")&&converted.contains("Rysm.model('tick'")&&converted.contains("Rysm.model('pose'"),"All legacy entries migrate to model events");
+        check(!converted.contains("Rysm.molang(")&&!converted.contains("Rysm.update(")&&!converted.contains("Rysm.pose(")&&!converted.contains("Rysm.cosmic(")&&!converted.contains("Rysm.logKeyBindings("),"Legacy entry calls remain after conversion");
+        check(converted.startsWith("// preserve this header\n")&&ScriptSyntaxMigration.convert(converted).equals(converted),"Event migration preserves source and is idempotent");
+        var old=new ScriptRuntime(bundle(source));var current=new ScriptRuntime(bundle(converted));
+        check(old.cosmic.equals(current.cosmic)&&current.logKeyBindingsRequested,"Load and cosmic events match legacy behavior");
+        check(ScriptDeclarations.read(bundle(source)).equals(ScriptDeclarations.read(bundle(converted))),"Server declarations match migrated client metadata");
+        current.callbacks(false,cx->current.snapshot(Map.of("model",Map.of("state",current.state()))));
+        check(current.evaluate("counter",new Object[0],cx->current.snapshot(Map.of("model",Map.of("state",current.state()))))==1,"Tick event runs on tick, not during registration");
+        check(current.evaluate("sum",new Object[]{2,3},cx->current.snapshot(Map.of()))==5,"New Molang event accepts numeric arguments");
+        current.callbacks(true,cx->current.snapshot(Map.of("model",Map.of("state",current.state()))));
+        check(org.mozilla.javascript.ScriptableObject.getProperty(current.state(),"posed").equals(true),"Pose event dispatch");
+        for(String invalid:List.of(
+                "Rysm.model('unknown',event=>{});",
+                "Rysm.model('molang',event=>event.register('bad',game=>0,{sync:1}));",
+                "Rysm.model('molang',event=>event.register('bad',(game,a)=>a,{sync:true}));",
+                "const options={sync:true};Rysm.model('molang',event=>event.register('bad',game=>0,options));",
+                "Rysm.model('molang',event=>{if(false)event.register('bad',game=>0);});",
+                "Rysm.model('molang',event=>{const register=event.register;register('bad',game=>0);});")) {
+            try{new ScriptRuntime(bundle(invalid));throw new AssertionError("Invalid event declaration accepted: "+invalid);}catch(IllegalArgumentException expected){}
+        }
+        var saved=new ScriptRuntime(bundle("let registration;Rysm.model('molang',event=>{registration=event;});Rysm.model('tick',game=>registration.register('late',game=>1));"));
+        saved.callbacks(false,cx->saved.snapshot(Map.of()));check(saved.molang.isEmpty(),"Saved event cannot register during tick");
+        // A deferred legacy log call was a no-op; migration must keep that behavior.
+        String deferred=ScriptSyntaxMigration.convert("Rysm.molang('log',game=>{Rysm.logKeyBindings();return 1;});");
+        var log=new ScriptRuntime(bundle(deferred));check(log.evaluate("log",new Object[0],cx->log.snapshot(Map.of()))==1&&!log.logKeyBindingsRequested,"Migration preserves deferred logging");
+    }
+    private static void fluentGroups() throws Exception {
+        String source="// keep this comment\nRysm.group('sky',{cosmic:{effect:'crosses',sc:'3388FF',sa:25},outline:{width:2,color:'33AAFF'},frameAnimation:{count:2,tick:6}});\nRysm.molang('constant',game=>3);";
+        String converted=ScriptSyntaxMigration.convert(source);
+        check(converted.contains(".cosmic(")&&converted.contains(".outline(")&&converted.contains(".frameAnimation("),"Migration emits fluent effects");
+        check(converted.startsWith("// keep this comment\n")&&converted.contains("game=>3"),"Migration preserves unrelated source");
+        check(ScriptSyntaxMigration.convert(converted).equals(converted),"JS migration is idempotent");
+        var before=new ScriptModel(bundle(source));var after=new ScriptModel(bundle(converted));
+        check(before.groups.equals(after.groups),"JS migration preserves group effects");
+        var combined=new ScriptModel(bundle(converted+"Rysm.model('group_modifier',event=>{event.modify('sky').glow().cosmic({sa:40});event.modify('sky').outline({width:3});});"));
+        var sky=combined.group("sky");
+        check(sky.getAsJsonObject("cosmic").get("effect").getAsString().equals("crosses")&&sky.getAsJsonObject("cosmic").get("sa").getAsInt()==40,"Repeated modifications merge effect parameters");
+        check(sky.has("frameAnimation")&&sky.getAsJsonObject("outline").get("width").getAsInt()==3&&sky.get("glow").getAsBoolean(),"Effects stack on one group");
+        String dynamic="const props={glow:true};Rysm.group('dynamic',props);";
+        check(new ScriptModel(bundle(ScriptSyntaxMigration.convert(dynamic))).flag("dynamic","glow"),"Dynamic properties survive migration");
+        var closed=new ScriptRuntime(bundle("let saved;Rysm.model('group_modifier',event=>{saved=event.modify('sky');});Rysm.molang('late',game=>{saved.glow();return 1;},{fallback:7});"));
+        check(closed.evaluate("late",new Object[0],cx->closed.snapshot(Map.of()))==7&&!closed.groups.get("sky").has("glow"),"Builders cannot modify registrations after loading");
+        try{new ScriptModel(bundle("Rysm.model('group_modifier',event=>event.modify('bad').physics({}).end());"));throw new AssertionError("Conflicting physics roles accepted");}catch(IllegalArgumentException expected){}
     }
     private static void functionFallbacks() throws Exception {
         var raw=new com.elfmcys.yesstevemodel.resource.pojo.RawYsmModel();raw.properties.sha256="f".repeat(64);
         raw.metadata.tips="Use rysmjs.sum() in animations";
         byte[] code="return rysmjs.sum(1, 2);".getBytes(StandardCharsets.UTF_8);
         raw.functionFiles.put("algorithm",new com.elfmcys.yesstevemodel.resource.pojo.RawYsmModel.RawDataFile("original",code));
-        raw.rysmBundle=bundle("Rysm.molang('sum',(ctx,a,b)=>a+b,{fallback:7});");
+        raw.rysmBundle=bundle("Rysm.molang('sum',(game,a,b)=>a+b,{fallback:7});");
         ScriptResources.prepare(raw);
         check(new String(raw.functionFiles.get("algorithm").data,StandardCharsets.UTF_8).equals("return (7.0);"),"Function file fallback export");
         check(raw.metadata.tips.equals("Use rysmjs.sum() in animations"),"Export modified descriptive text");
@@ -58,13 +112,13 @@ public final class ScriptChecks {
         check(raw.functionFiles.get("algorithm").hash.equals("original"),"Function digest restoration");
     }
     private static void synchronization() throws Exception {
-        var bundle=bundle("Rysm.molang('toggle',ctx=>true,{fallback:false,sync:true});Rysm.molang('sum',(ctx,a,b)=>a+b,{fallback:7});");
+        var bundle=bundle("Rysm.molang('toggle',game=>true,{fallback:false,sync:true});Rysm.molang('sum',(game,a,b)=>a+b,{fallback:7});");
         var declarations=ScriptDeclarations.read(bundle);
         check(declarations.get("toggle").sync()&&!declarations.get("sum").sync(),"Static sync declarations");
         var runtime=new ScriptRuntime(bundle);
         check(runtime.evaluate("toggle",new Object[0],cx->runtime.snapshot(Map.of()))==1,"Boolean synchronized output");
         check(runtime.evaluate("toggle",new Object[]{1},cx->runtime.snapshot(Map.of()))==0,"Synchronized output rejects arguments");
-        for(String invalid:List.of("Rysm.molang('bad',(ctx,a)=>a,{sync:true});","Rysm.molang('rysmjs.bad',ctx=>0);","Rysm.molang('bad',ctx=>0,{sync:1});","const flag=true;Rysm.molang('bad',ctx=>0,{sync:flag});")) {
+        for(String invalid:List.of("Rysm.molang('bad',(game,a)=>a,{sync:true});","Rysm.molang('rysmjs.bad',game=>0);","Rysm.molang('bad',game=>0,{sync:1});","const flag=true;Rysm.molang('bad',game=>0,{sync:flag});")) {
             try{new ScriptRuntime(bundle(invalid));throw new AssertionError("Invalid declaration accepted: "+invalid);}catch(IllegalArgumentException expected){}
         }
         check(ScriptSync.validValues(Map.of("toggle",1.0),Set.of("toggle")),"Valid sync snapshot");
@@ -163,11 +217,23 @@ public final class ScriptChecks {
                 try(var files=Files.walk(temp)){for(Path f:files.toList()) {
                     Path d=input.resolve(temp.relativize(f));if(Files.isDirectory(f))Files.createDirectories(d);else Files.copy(f,d);
                 }}
+                Files.createDirectories(input.resolve("rysm/scripts"));
+                Files.writeString(input.resolve("rysm/manifest.json"),"{\"version\":1,\"scripts\":[\"scripts/main.js\"]}");
+                Files.writeString(input.resolve("rysm/scripts/main.js"),"Rysm.group('cape',{glow:true});");
                 ScriptUpgrade.process(inbox,custom);
+                check(Files.readString(custom.resolve("legacy/rysm/scripts/main.js")).contains("Rysm.model("),"Folder inbox did not convert old JS");
                 check(!Files.exists(input)&&Files.exists(custom.resolve("legacy/rysm/manifest.json")),"Folder inbox upgrade failed");
-                try(var backups=Files.list(queue.resolve("rysm-backups"))){check(backups.findAny().isPresent(),"Original backup missing");}
+                try(var backups=Files.list(queue.resolve("rysm-backups"))){check(Files.readString(backups.findFirst().orElseThrow().resolve("rysm/scripts/main.js")).equals("Rysm.group('cape',{glow:true});"),"Original JS backup missing or changed");}
                 Files.createDirectory(input);Files.writeString(input.resolve("keep.txt"),"keep");
                 ScriptUpgrade.process(inbox,custom);check(Files.exists(input.resolve("keep.txt")),"Collision removed input");
+                Path invalid=inbox.resolve("invalid-js");
+                try(var files=Files.walk(custom.resolve("legacy"))){for(Path f:files.toList()) {
+                    Path d=invalid.resolve(custom.resolve("legacy").relativize(f));if(Files.isDirectory(f))Files.createDirectories(d);else Files.copy(f,d);
+                }}
+                String invalidJs="Rysm.group('cape',{unknown:true});";
+                Files.writeString(invalid.resolve("rysm/scripts/main.js"),invalidJs);
+                ScriptUpgrade.process(inbox,custom);
+                check(Files.readString(invalid.resolve("rysm/scripts/main.js")).equals(invalidJs)&&!Files.exists(custom.resolve("invalid-js")),"Invalid JS changed or published");
                 Path bad=inbox.resolve("bad.zip");Files.writeString(bad,"invalid archive");
                 ScriptUpgrade.process(inbox,custom);check(Files.exists(bad)&&!Files.exists(custom.resolve("bad.zip")),"Invalid ZIP was published");
                 Path zipped=inbox.resolve("legacy.zip");
@@ -177,10 +243,15 @@ public final class ScriptChecks {
                         if(Files.isDirectory(f))Files.createDirectories(d);else Files.copy(f,d);
                     }}
                 }
+                try(var zip=FileSystems.newFileSystem(zipped)) {
+                    Files.createDirectories(zip.getPath("/rysm/scripts"));
+                    Files.writeString(zip.getPath("/rysm/manifest.json"),"{\"version\":1,\"scripts\":[\"scripts/main.js\"]}");
+                    Files.writeString(zip.getPath("/rysm/scripts/main.js"),"Rysm.group('cape',{glow:true});");
+                }
                 ScriptUpgrade.process(inbox,custom);
                 check(!Files.exists(zipped)&&Files.exists(custom.resolve("legacy.zip")),"ZIP inbox upgrade failed");
                 try(var zip=FileSystems.newFileSystem(custom.resolve("legacy.zip"))) {
-                    check(Files.exists(zip.getPath("/rysm/manifest.json")),"ZIP output lacks manifest");
+                    check(Files.exists(zip.getPath("/rysm/manifest.json"))&&Files.readString(zip.getPath("/rysm/scripts/main.js")).contains("Rysm.model("),"ZIP output lacks converted script");
                 }
             }finally {try(var files=Files.walk(queue)){for(Path p:files.sorted(Comparator.reverseOrder()).toList())Files.delete(p);}}
             Files.createDirectory(temp.resolve("rysm"));
@@ -216,6 +287,7 @@ public final class ScriptChecks {
             check(org.lwjgl.opengl.GL11.glGetError()==0,"OpenGL error");
             System.out.println("Cosmic effect isolation, animated upload, fallback and cleanup passed");
             com.elfmcys.yesstevemodel.geckolib3.geo.OutlineDepthChecks.run();
+            net.everla.reimaginedysm.gpu.GpuSurfaceChecks.run();
         }finally {CosmicTextures.clear();org.lwjgl.glfw.GLFW.glfwDestroyWindow(window);org.lwjgl.glfw.GLFW.glfwTerminate();}
     }
 

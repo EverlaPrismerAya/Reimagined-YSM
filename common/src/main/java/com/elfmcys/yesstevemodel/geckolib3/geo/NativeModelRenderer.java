@@ -97,7 +97,7 @@ public class NativeModelRenderer {
         boolean isPreview = isPreview();
 
         if (textureLocation != null && buffer instanceof BufferBuilder
-                && model.hasGroupStyles) {
+                && (model.hasGroupStyles || model.isTranslucentTexture(textureIndex))) {
             if (GroupEffectRenderer.render(pose, model,
                     boneParams, stateBuffer,
                     textureIndex, renderPartMask, packedLight, packedOverlay, red, green, blue, alpha,

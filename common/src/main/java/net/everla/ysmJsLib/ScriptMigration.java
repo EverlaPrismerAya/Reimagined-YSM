@@ -37,6 +37,7 @@ public final class ScriptMigration {
             var manifest=new JsonObject();manifest.addProperty("version",1);var entries=new JsonArray();entries.add("scripts/migrated.js");manifest.add("scripts",entries);manifest.addProperty("migrated",true);
             StringBuilder js=new StringBuilder("// Automatically migrated from group-name properties.\n");
             props.forEach((name,p)->js.append("Rysm.group(").append(new Gson().toJson(name)).append(", ").append(p).append(");\n"));
+            String convertedJs=ScriptSyntaxMigration.convert(js.toString());
             Path backup=Path.of("config","yes_steve_model","rysm-backups",root.getFileName()+"-"+System.currentTimeMillis()+"-"+java.util.UUID.randomUUID());Files.createDirectories(backup);
             var originals=new LinkedHashMap<Path,byte[]>();
             try(var files=Files.walk(root)) {
@@ -55,7 +56,7 @@ public final class ScriptMigration {
                 }}
                 for(var e:documents.entrySet())Files.writeString(stage.resolve(root.relativize(e.getKey()).toString()),JSON.toJson(e.getValue()));
                 Files.createDirectories(stage.resolve("rysm/scripts"));
-                Files.writeString(stage.resolve("rysm/scripts/migrated.js"),js);
+                Files.writeString(stage.resolve("rysm/scripts/migrated.js"),convertedJs);
                 Files.writeString(stage.resolve("rysm/manifest.json"),JSON.toJson(manifest));
                 try(var reader=new com.elfmcys.yesstevemodel.resource.YSMFolderDeserializer(stage)) {
                     var raw=reader.deserialize();if(raw.mainEntity.mainModel==null)throw new IOException("Migrated model has no main geometry");
@@ -67,7 +68,7 @@ public final class ScriptMigration {
                 }
                 for(var e:documents.entrySet()){originals.put(e.getKey(),Files.readAllBytes(e.getKey()));Files.writeString(e.getKey(),JSON.toJson(e.getValue()));}
                 Files.createDirectories(root.resolve("rysm/scripts"));
-                Files.writeString(root.resolve("rysm/scripts/migrated.js"),js);
+                Files.writeString(root.resolve("rysm/scripts/migrated.js"),convertedJs);
                 Files.writeString(root.resolve("rysm/migration-report.txt"),"Backup: "+backup+"\n"+String.join("\n",report));
                 Files.writeString(root.resolve("rysm/manifest.json"),JSON.toJson(manifest));
                 org.slf4j.LoggerFactory.getLogger("rysmjs").info("Migrated {} (backup {})",root,backup);
@@ -142,7 +143,7 @@ public final class ScriptMigration {
         var manifest=new JsonObject();manifest.addProperty("version",1);manifest.addProperty("migrated",true);
         manifest.addProperty("modelSha256",ScriptResources.modelDigest(source));
         var scripts=new JsonArray();scripts.add("scripts/migrated.js");manifest.add("scripts",scripts);
-        ScriptBundle bundle=new ScriptBundle(Map.of("rysm/manifest.json",manifest.toString().getBytes(StandardCharsets.UTF_8),"rysm/scripts/migrated.js",js.toString().getBytes(StandardCharsets.UTF_8),"rysm/restore.json",restore.toString().getBytes(StandardCharsets.UTF_8)));
+        ScriptBundle bundle=new ScriptBundle(Map.of("rysm/manifest.json",manifest.toString().getBytes(StandardCharsets.UTF_8),"rysm/scripts/migrated.js",ScriptSyntaxMigration.convert(js.toString()).getBytes(StandardCharsets.UTF_8),"rysm/restore.json",restore.toString().getBytes(StandardCharsets.UTF_8)));
         Path backups=Path.of("config","yes_steve_model","rysm-backups");Files.createDirectories(backups);
         Path backup=backups.resolve(source.getFileName()+"-"+UUID.randomUUID()+".bak");Files.copy(source,backup);
         String filename=source.getFileName().toString();Path side=source.resolveSibling(filename.substring(0,filename.length()-4)+".rysm");

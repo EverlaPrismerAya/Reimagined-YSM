@@ -145,8 +145,8 @@ public final class GpuPhysics {
             GL15.glGetBufferSubData(org.lwjgl.opengl.GL43.GL_SHADER_STORAGE_BUFFER,0,data);
             for(int sorted=0;sorted<matrices.length;sorted++) {
                 int original=instance.kernel.model.original[sorted];
-                matrices[original]=new Matrix4f(data.asFloatBuffer().position(sorted*36));
-                visible[original]=data.getInt(sorted*144+132)==0;
+                matrices[original]=new Matrix4f(data.asFloatBuffer().position(original*36));
+                visible[original]=data.getInt(original*144+132)==0;
             }
             return true;
         } finally {

@@ -70,9 +70,7 @@ public final class ScriptUpgrade {
         });
         if (models.isEmpty()) throw new IOException("No source models found");
         for (Path model : models) {
-            if (!Files.exists(model.resolve("rysm/manifest.json")) && !ScriptMigration.legacySource(model))
-                throw new IOException("No legacy RYSM groups in " + model);
-            if (!ScriptMigration.migrate(model)) throw new IOException("Migration failed: " + model);
+            ScriptSyntaxMigration.migrate(model);
             try (var reader = new YSMFolderDeserializer(model)) {
                 var raw = reader.deserialize();
                 if (raw.mainEntity.mainModel == null || raw.rysmBundle == null)

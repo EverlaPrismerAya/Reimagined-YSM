@@ -1,8 +1,6 @@
-## 说明
+# Reimagined YSM
 
-Reimagined YSM 是一款基于 [Yes Steve Model](https://modrinth.com/mod/yes-steve-model) 的模组，它修改了原版玩家模型，其核心使用 [GeckoLib](https://github.com/bernie-g/geckolib) 库，并采用了 Minecraft 基岩版的模型和动画文件。这使得玩家可以根据自己的喜好自定义玩家模型和动画。
-
-本项目使用可选的C++库实现更快速的渲染，项目位于[OpenYSMDev/openysm.cpp](https://github.com/OpenYSMDev/openysm.cpp)
+Reimagined YSM 是一款基于 Yes Steve Model 的模组，它修改了原版玩家模型，其核心使用 GeckoLib 库，并采用了 Minecraft 基岩版的模型和动画文件。这使得玩家可以根据自己的喜好自定义玩家模型和动画。
 
 本项目基于OpenYSM，目标是提供一个在多人模式下优化了网络传输方式，并可以纯客户端模式运行的替代品。
 
@@ -12,9 +10,9 @@ Reimagined YSM 是一款基于 [Yes Steve Model](https://modrinth.com/mod/yes-st
 
 此项目诞生的原因仅仅是我受不了YSM没有官方支持的纯客户端模式与模型下载传输优化。
 
-Reimagined YSM 仅维护简体中文（`zh_cn`）和英语（`en_us`）两种语言。
+Reimagined YSM 仅维护简体中文（zh_cn）和英语（en_us）两种语言。
 
-## QoL优化
+## 改良与兼容性
 
 ### 官方 YSM 服务端兼容
 
@@ -57,236 +55,371 @@ Reimagined YSM 仅维护简体中文（`zh_cn`）和英语（`en_us`）两种语
 
 闭合透明块剔除背面，只显示朝向相机的外壳。开口、镂空和单面几何沿用各自的双面规则。裁切使用闭合方块作为实体体积。剩余半透明外表面按由远至近的顺序混合。
 
-## 新增组
+## 安装模型
 
-### 物理组
+将模型放入游戏目录下的对应文件夹。
 
-见下文物理组
+| 用途 | 目录 | 说明 |
+| --- | --- | --- |
+| 单人模型或服务器共享模型 | `config/yes_steve_model/custom/` | 单人世界，或通过服务器向玩家共享 |
+| 个人模型 | `config/yes_steve_model/client/` | 本机玩家可见 |
 
-### 摄像头锁定组
+模型可以使用源码文件夹、`.zip` 或 `.ysm`。带 JS 的导出模型由同名的 `.ysm` 和 `.rysm` 组成。将这两个文件放在同一目录。
 
-组名以 `FacingCamera` 开头（区分大小写，例如 `FacingCamera_spark`）时，该组会像原版粒子、雪球一样同时跟随摄像头的水平和俯仰方向。以组枢轴为旋转中心，保留位置、缩放和子组的相对变换；该组自身及父组的旋转不会改变其最终朝向。建议将贴图平面放在组的局部 XY 平面。
-
-此类组自动分离使用 Java 顶点渲染路径，包括启用 GPU/原生渲染时，模型其他部分仍使用原有路径。因此不建议添加过多此类组。
-
-### Cosmic 星空组
-
-将组命名为 `ysmCosmic@名称`。该组及其普通子组中的方块使用 Avaritia Cosmic 星空效果。转动相机时，星空随观察方向变化。默认配置使用 Avaritia 的空间脉动颜色和各层星体颜色。
-
-使用 `#参数名=值,参数名=值` 配置颜色和透色比例：
+源码模型示例：
 
 ```text
-ysmCosmic@默认星空
-ysmCosmic#sc=00ffca,sa=96,ac=ffffff,aa=25@自定义星空
+config/yes_steve_model/custom/my_model/
+├─ ysm.json
+├─ models/main.json
+├─ animations/main.animation.json
+└─ rysm/
+   ├─ manifest.json
+   └─ scripts/main.js
 ```
 
-| 参数 | 含义 | 输入 | 默认值 |
-|---|---|---|---|
-| `sc` |   空间颜色 | 六位十六进制 RGB，例如 `00ffca` | Avaritia 空间脉动颜色 |
-| `sa` | 空间层透出模型纹理颜色的比例 | 0–100，单位为百分比 | 0 |
-| `ac` | 星体颜色 | 六位十六进制 RGB，例如 `ffffff` | Avaritia 各层星体颜色 |
-| `aa` | 星体层透出空间颜色的比例 | 0–100，单位为百分比 | 0 |
+进入世界后，在模型选择界面选择模型。启用「强制纯客户端模式」后，本地模型按个人模型使用。
 
-颜色值直接填写六位 RGB。透色比例为 `0` 时，该层完全使用自身颜色。比例为 `100` 时，该层完全使用底层颜色。模型纹理的 alpha 控制方块表面的透明度。
+## 用 JS 设置模型
 
-Cosmic 着色器和星体纹理来自 [Avaritia](https://github.com/Morpheus1101/Avaritia/tree/07ce275b46e8afe4d932a0178777591794d7f612)。资源来源和适配说明随模组资源一同保存。
+在 Blockbench 中使用普通组名，例如 `cape`、`ornament` 和 `panel`。在脚本中按组名设置效果。
 
-### 描边组
+### 1. 添加脚本清单
 
-将组命名为 `ysmOutline@名称`。系统为该组及其普通子组生成整体轮廓。使用 `width` 设置描边宽度，默认值为 `2`，单位为渲染像素。前方其他组的不透明方块会遮挡后方描边。
+在模型目录创建 `rysm/manifest.json`：
 
-```text
-ysmOutline@自动颜色
-ysmOutline#color=auto@自动颜色
-ysmOutline#color=7b1020,width=3@固定暗红色
-ysmOutline#width=0.5@细描边
+```json
+{
+  "version": 1,
+  "scripts": ["scripts/main.js"]
+}
 ```
 
-`width` 接受 `0–64` 的数值，支持小数。`0` 关闭该组描边。普通子组继承描边宽度。嵌套新的 `ysmOutline` 组时，宽度默认恢复为 `2`。
+清单中的路径相对于 `rysm/`。多个脚本按清单顺序加载。
 
-`color` 接受 `auto` 或六位十六进制 RGB，默认值为 `auto`。自动颜色按组表面的面积、纹理颜色和 alpha 权重计算平均颜色。系统将平均颜色与灰色混合，保留 55% 色度，再将亮度降至 25%。每套纹理单独计算自动颜色。固定 RGB 直接作为描边颜色。
+### 2. 添加组效果
 
-**示例：使用嵌套组组合描边与 Cosmic**
+创建 `rysm/scripts/main.js`：
 
-```text
-ysmOutline#color=auto@外轮廓
-└─ ysmCosmic#sc=102549,ac=00ffca@星空
-   └─ 普通模型组
+```js
+Rysm.model('group_modifier', event => {
+  // 为 panel 同时设置星空和描边。
+  event.modify('panel')
+    .cosmic({sc: '3388FF', sa: 25})
+    .outline({width: 2, color: '33AAFF'});
+
+  // 让 ornament 面向摄像机，并启用发光。
+  event.modify('ornament').facingCamera().glow();
+});
 ```
 
-组名和参数名区分大小写。参数之间使用逗号分隔。`@` 后填写组名称。
+将示例中的组名改为模型中的组名。重新加载模型后查看效果。
 
-### 单面物品厚度
+### 3. 叠加效果
 
-将组命名为 `ysmItem@名称`。在该组内直接放置一个方块，并为其中一个面分配 UV。其余面使用空 UV。
+在一次 `modify` 后连续调用效果方法。也可以再次修改同一组。
 
-模型加载时，系统在纹理面两侧各扩展半个模型像素。生成后的物品总厚度为一个模型像素。正面和背面使用原贴图。纹理外轮廓和透明孔洞生成侧面。
+```js
+Rysm.model('group_modifier', event => {
+  event.modify('panel').cosmic({sc: '3388FF', sa: 25});
+  event.modify('panel').outline({width: 3});
 
-此组支持方块旋转，以及 UV 的旋转和翻转。普通渲染、原生渲染和 GPU 渲染共用生成后的几何。
+  // 更新 sa，保留已设置的 sc。
+  event.modify('panel').cosmic({sa: 15});
+});
+```
 
-## 物理组
+不同效果组合使用。同类效果按字段合并，同名字段使用后写的值。布尔效果可省略 `true`，例如 `.glow()`；传入 `false` 可关闭效果。
 
-### 尾骨
+## 组效果速查
 
-`ysmTail@名称` 是适合生物尾巴的物理骨变式，使用同样的 `#参数` 语法及 `ysmPhysEnd@名称` 末端。例如：
+| 方法 | 用途 | 示例 |
+| --- | --- | --- |
+| `.physics({...})` | 添加物理骨骼 | `.physics({g: 9.8, s: 20})` |
+| `.physics({kind: 'tail'})` | 添加尾骨 | `.physics({kind: 'tail', gw: 3})` |
+| `.end()` | 标记物理链末端 | `event.modify('tail_end').end()` |
+| `.collider()` | 将组内方块用作身体碰撞体 | `event.modify('body_collider').collider()` |
+| `.facingCamera()` | 让组面向摄像机 | `.facingCamera()` |
+| `.glow()` | 启用发光 | `.glow()` |
+| `.item()` | 为单面贴图生成厚度 | `.item()` |
+| `.cosmic({...})` | 添加星空效果 | `.cosmic({sc: '3388FF', sa: 25})` |
+| `.outline({...})` | 添加描边 | `.outline({color: 'auto', width: 2})` |
+| `.frameAnimation({...})` | 切换 UV 动画帧 | `.frameAnimation({count: 2, tick: 6})` |
+
+### 星空与描边
+
+星空随观察方向变化。普通子组继承星空和描边设置。
+
+| 参数 | 含义 | 取值 |
+| --- | --- | --- |
+| `cosmic.sc` | 空间颜色 | 六位 RGB，例如 `'3388FF'` |
+| `cosmic.sa` | 空间层透出模型贴图颜色的比例 | `0–100`，默认 `0` |
+| `cosmic.ac` | 星体颜色 | 六位 RGB，例如 `'FFFFFF'` |
+| `cosmic.aa` | 星体层透出空间颜色的比例 | `0–100`，默认 `0` |
+| `cosmic.effect` | 自定义星空名称 | 在 `cosmic` 事件中注册的名称 |
+| `outline.color` | 描边颜色 | 六位 RGB 或 `'auto'`，默认 `'auto'` |
+| `outline.width` | 描边宽度 | `0–64` 渲染像素，默认 `2`，支持小数 |
+
+颜色直接写六位 RGB，例如 `'33AAFF'`。自动描边颜色根据当前贴图计算。描边宽度为 `0` 时关闭描边。
+
+自定义星空示例：
+
+```js
+Rysm.model('cosmic', event => {
+  // 贴图位置：rysm/cosmic/crosses/cross.png
+  event.register('crosses', {textures: ['cross.png']});
+});
+
+Rysm.model('group_modifier', event => {
+  event.modify('panel').cosmic({effect: 'crosses'});
+});
+```
+
+使用默认星空时，调用 `.cosmic({})`。自定义星空的竖向帧条通过同名 `.png.mcmeta` 设置帧时间。
+
+### 面向摄像机、单面厚度与帧动画
+
+面向摄像机的组围绕组枢轴旋转。制作平面效果时，将贴图平面放在组的局部 XY 平面。
+
+使用 `.item()` 时，在组内直接放置一个方块。为一个面分配有效 UV，其余面使用空 UV。系统沿贴图轮廓生成侧面，总厚度为一个模型像素。
+
+帧动画也使用单个方块和一个有效 UV 面。将各帧在贴图中竖直排列，按第一帧设置 UV。
+
+```js
+Rysm.model('group_modifier', event => {
+  // 共两帧，每 6 tick 切换一次。20 tick 等于 1 秒。
+  event.modify('frame_panel').frameAnimation({count: 2, tick: 6});
+
+  // 用 Molang 值选择帧，帧号从 1 开始。
+  event.modify('macro_panel').frameAnimation({
+    count: 2,
+    macro: 'rysmjs.frame',
+    macroRepeat: false
+  });
+});
+```
+
+`tick` 和 `macro` 选择一种。`macroRepeat` 默认为 `true`，超过末帧后循环；设为 `false` 后保持末帧。
+
+### 半透明方块
+
+同一普通组内的闭合半透明方块共享合并范围。方块相交时，系统根据当前姿态裁切内部表面，保留外侧表面和对应 UV。该处理支持旋转方块和骨骼动画。
+
+## 设置物理链
+
+先在 Blockbench 中建立父子关系：
 
 ```text
 Body
-└─ ysmTail@tail_base
-   └─ ysmTail@tail_middle
-      └─ ysmTail@tail_tip
-         └─ ysmPhysEnd@tail_end
+├─ body_collider
+└─ cape
+   └─ cape_tip
+      └─ cape_end
 ```
 
-尾骨默认参数为 `r=10,gw=3,s=16,a=50,c=1,air=0.5,bc=false`。静止时，尾骨围绕当前动画姿态悬浮并回弹。水平移动时，尾骨产生左右波动和较小的上下波动。波动沿尾链逐节延迟。
+再为各组分配角色：
 
-摆幅随水平速度增加，在两方块/秒时达到上限。停止移动后，阻尼和回弹使尾骨恢复到动画姿态。行走、飞行、游泳和外力推动产生的水平位移均可驱动波动。
-
-连续同类型骨骼继承参数。普通物理骨与尾骨相接时，新类型先使用自身默认参数，再应用组内显式参数。整条链共享连接、碰撞和角度约束。使用 `ysmTail#g=9.8@名称` 施加世界向下重力。使用 `ysmTail#gw=6@名称` 调整朝动画目标的吸引强度。CPU 和 GPU 求解使用相同尾骨规则。
-
-### 组名与参数
-
-```text
-ysmPhys@hair
-ysmPhys#r=1.0,g=9.8@hair
-ysmPhys#r=2, g=0, s=30, a=60, c=0.75@ribbon
-ysmPhys#bc=true@tail
-ysmPhys#gw=9.8@floating
+```js
+Rysm.model('group_modifier', event => {
+  event.modify('cape').physics({g: 9.8, s: 20, a: 90, bc: true});
+  event.modify('cape_tip').physics({});
+  event.modify('cape_end').end();
+  event.modify('body_collider').collider();
+});
 ```
 
-大小写敏感，`@` 分隔参数与非空名称，不支持多个 `@`。参数之间允许空白。
+将末端组放在骨骼的延伸方向，使骨骼长度大于零。身体碰撞组直接包含用于碰撞的方块。每个组从物理骨骼、末端和身体碰撞体中选择一种角色，再按需要叠加描边等效果。
 
-### 显式身体碰撞与限制
+尾巴使用 `.physics({kind: 'tail'})`。连续尾骨形成尾链。尾巴随水平移动摆动，停止移动后回到动画姿态。
 
-只有名称为 `ysmPhysC@非空名称` 的组**直接包含的方块**才是碰撞体。普通组及普通子组中的方块完全不参与；想让多个子组参与，就分别添加该前缀。名称大小写敏感，不接受参数或多个 `@`。例如：
+| 参数 | 含义 | 普通物理默认值 | 尾骨默认值 |
+| --- | --- | --- | --- |
+| `r` | 阻尼；数值越大，运动衰减越快 | `1` | `10` |
+| `g` | 世界向下的加速度，格/秒²；负数向上 | `9.8` | 使用 `gw` |
+| `gw` | 朝动画目标的加速度，格/秒²；负数向外 | 使用 `g` | `3` |
+| `s` | 回弹强度；数值越大，越快回到动画姿态 | `20` | `16` |
+| `a` | 最大偏转角，度，范围 `0–180` | `90` | `50` |
+| `c` | 骨骼碰撞半径，模型像素 | `1` | `1` |
+| `air` | 空气阻力系数 | `0.5` | `0.5` |
+| `bc` | 启用世界方块碰撞 | `false` | `false` |
+| `enable` | 仅在条件成立时启用物理 | 默认启用 | 默认启用 |
+| `disable` | 在条件成立时停用物理 | 默认启用 | 默认启用 |
 
-```text
-Body
-├─ 普通身体方块（不碰撞）
-└─ ysmPhysC@chest
-   └─ 胸部碰撞方块
+`r`、`s`、`c` 和 `air` 使用大于或等于零的数值。重力选择 `g` 或 `gw`。连续同类物理骨骼继承父组参数，子组可以覆盖指定参数。
+
+按动画或数值控制物理：
+
+```js
+Rysm.model('group_modifier', event => {
+  // jump 动画播放时停用衣摆物理。
+  event.modify('robe').physics({disable: '(jump)'});
+
+  // jump 或 fly 动画播放时启用翅膀物理。
+  event.modify('wing').physics({enable: '(jump,fly)'});
+
+  // 两项比较同时成立时启用左翼物理。
+  event.modify('leftwing').physics({
+    enable: '(v.wings_phys>=1,rysmjs.toggle=1)'
+  });
+});
 ```
 
-### 链条、分叉与末端
+动画条件使用动画文件中的完整动画名。每个条件列表选择动画名或数值比较。数值比较支持 `v.*`、`variable.*` 和 `rysmjs.*`，运算符为 `=`、`!=`、`>`、`>=`、`<`、`<=`。`disable` 条件优先。
 
-```text
-Head
-└─ ysmPhys@hair
-   └─ ysmPhys#r=2@tip
-      └─ ysmPhysEnd@hair_end
+## 编写按键和动画逻辑
+
+所有入口使用 `Rysm.model('事件名', callback)`。
+
+| 事件 | 用途 | 回调中的主要接口 |
+| --- | --- | --- |
+| `group_modifier` | 设置组效果 | `event.modify(name)` |
+| `cosmic` | 声明星空资源 | `event.register(name, options)` |
+| `molang` | 注册可供动画查询的算法 | `event.register(name, callback, options)` |
+| `load` | 在加载时输出快捷键列表 | `event.logKeyBindings()` |
+| `tick` | 每客户端 tick 更新状态 | `game.model.state`、`game.input` |
+| `pose` | 在动画求值后调整姿态 | `game.group(name)` 及其他上下文 |
+
+下面的示例用 ESC 切换一个开关，再按开关旋转装饰组：
+
+```js
+Rysm.model('tick', game => {
+  if (game.input.key('key.keyboard.escape').pressed) {
+    game.model.state.open = !game.model.state.open;
+  }
+});
+
+Rysm.model('molang', event => {
+  // 动画中使用 rysmjs.toggle。sync:true 将结果传给其他玩家。
+  event.register('toggle', game => !!game.model.state.open, {fallback: 0, sync: true});
+});
+
+Rysm.model('pose', game => {
+  game.group('ornament').rotate(0, game.molang('rysmjs.toggle') * 90, 0);
+});
 ```
 
-### 参数表格
+Molang 注册名称使用小写字母、数字和下划线，并以字母或下划线开头。在注册名称中省略 `rysmjs.` 前缀。将名称和选项直接写在 `event.register` 中。
 
-| 参数 | 含义 | 默认值 | 范围 |
-|---|---|---|---|
-| `r` | 速度衰减系数；每个子步乘以 `exp(-r × dt)`，越大阻尼越强 | 1.0 | ≥ 0 |
-| `g` | 沿世界向下的加速度，方块/秒²；负数向上 | 9.8 | 有限数值 |
-| `gw` | 朝当前模型/动画目标位置的加速度，方块/秒²；正数吸引、负数排斥、0 关闭 | 无 | 有限数值；与 `g` 冲突 |
-| `s` | 回到当前动画目标位置的回弹强度，秒⁻² | 20 | ≥ 0 |
-| `a` | 相对动画姿态允许的最大偏转角，度 | 90 | 0–180 |
-| `c` | 单个骨骼的碰撞胶囊体半径，模型像素 | 1.0 | ≥ 0 |
-| `air` | 静止世界空气的二次阻力系数，方块⁻¹；0 关闭 | 0.5 | ≥ 0 |
-| `bc` | 与世界方块的实际碰撞形状交互 | false | `true` / `false` |
-| `disable` | 条件满足时，禁用物理（黑名单） | 无 | `(动画名列表)` 或 `(变量比较列表)` |
-| `enable` | 仅在条件满足时，启用物理（白名单） | 无 | `(动画名列表)` 或 `(变量比较列表)` |
+`fallback` 是算法出错或远端同步值尚未到达时使用的数值。`sync: true` 用于让其他玩家看到相同的按键动画。服务器通过 `rysmJsSyncEnabled` 设置是否转发同步值，默认开启。
 
-### 按条件启用或禁用物理
+### 在聊天栏输出信息
 
-动画列表中，任一指定动画播放时，条件满足。使用动画文件中的完整动画名。名称区分大小写。不要使用控制器的状态名。进入和退出动画的过渡阶段也计入播放时间。
+使用 `game.print(...)` 输出文字、数字、布尔值、数组或对象。多个值用空格分隔，对象按 JSON 输出。消息显示在模型所属本机玩家的聊天栏。每个模型实例每 tick 最多输出 16 条，每条最多 4096 个字符。
 
-```text
-ysmPhys#disable=(jump)@robe
-ysmPhys#enable=(jump,fly)@wing
+```js
+Rysm.model('tick', game => {
+  // 按 F8 输出当前血量和模型变量。
+  if (game.input.key('key.keyboard.f8').pressed) {
+    game.print('当前血量：', game.entity.health);
+    game.print('模型变量：', game.model.state);
+  }
+});
 ```
 
-第一个示例仅在 `jump` 播放时禁用 `robe` 的物理。第二个示例仅在 `jump` 或 `fly` 播放时启用 `wing` 的物理。
+### 快速查询某个模组的快捷键
 
-变量列表中，所有比较同时成立时，条件满足。使用 `v.变量名` 或 `variable.变量名`。支持嵌套变量，例如 `v.roaming.wings_phys`。未设置的变量按 `0` 处理。
+下面的脚本在按 F9 时，将精妙背包的快捷键输出到聊天栏。
 
-| 运算符 | 含义 |
-|---|---|
-| `=` | 等于 |
-| `>=` | 大于或等于 |
-| `<=` | 小于或等于 |
-| `>` | 大于 |
-| `<` | 小于 |
-| `!=` | 不等于 |
-
-```text
-ysmPhys#enable=(v.roaming.wings_phys>=1,v.roaming.wings_phys_enable=1)@leftwing
-ysmPhys#disable=(v.roaming.freeze=1)@robe
+```js
+Rysm.model('tick', game => {
+  if (game.input.key('key.keyboard.f9').pressed) {
+    // 将 sophisticatedbackpacks 改为需要查询的模组 ID。
+    const keys = game.input.bindings('sophisticatedbackpacks');
+    game.print('匹配的快捷键数量：', keys.length);
+    keys.forEach(key => {
+      game.print(key.name, '| ID:', key.id, '| 当前按键:', key.key);
+    });
+  }
+});
 ```
 
-第一个示例仅在 `wings_phys` 大于或等于 `1`，且 `wings_phys_enable` 等于 `1` 时启用 `leftwing` 的物理。第二个示例在 `freeze` 等于 `1` 时禁用 `robe` 的物理。
+`bindings(filter)` 按快捷键 ID 或分类 ID 包含的文字筛选，忽略大小写。省略参数可查询全部快捷键。每项包含 `id`、`category`、`key` 和 `name`。`name` 优先使用资源包中的简体中文，其次使用英语，最后使用快捷键 ID。查询结果中的 `id` 可传给 `game.input.binding(id)`。
 
-同一个列表内，不要混用动画名和变量比较。数值可以是负数、小数或科学计数法。
+### game 速查
 
-没有 `enable` 时，默认允许启用物理。同时设置两种条件时，`disable` 优先。
+`tick`、`pose` 和 Molang 算法回调提供 `game`。将需要保留的值写入 `game.model.state`，其他字段用于读取。
 
-直系物理子组继承父组的条件。子组显式设置同名参数时，替换继承的列表。父物理组禁用时，其连续物理子链也停用。
+| 字段或方法 | 含义 |
+| --- | --- |
+| `game.entity.health` / `maxHealth` | 当前生命值 / 最大生命值 |
+| `game.entity.position.x/y/z` | 世界坐标 |
+| `game.entity.velocity.x/y/z` | 速度分量，格/tick |
+| `game.entity.yaw` / `pitch` | 实体水平角 / 俯仰角，单位度 |
+| `game.entity.pose` | 姿态名称，例如 `'standing'` |
+| `game.entity.local` | 是否为本机玩家 |
+| `game.camera.yaw` / `pitch` | 摄像机水平角 / 俯仰角，单位度 |
+| `game.time.ticks` / `seconds` | 实体存活时间，包含动画插值 |
+| `game.model.state` | 当前模型实例保存的数据 |
+| `game.print(...values)` | 在本机聊天栏输出文字、变量和对象 |
+| `game.input.bindings(filter)` | 查询快捷键 ID、绑定按键和中文优先的名称 |
+| `game.input.key(id)` | 原始键盘或鼠标按键状态 |
+| `game.input.binding(id)` | 跟随游戏设置的快捷键状态 |
+| `game.molang(expression)` | 读取 Molang 数值，例如 `'rysmjs.toggle'` |
+| `game.group(name)` | 获取组变换对象，在 `pose` 中使用 |
 
-禁用物理后，该组恢复动画旋转。重新启用时，物理模拟从当前动画姿态开始。
+按键状态包含 `down`（按住）、`pressed`（本 tick 按下）和 `released`（本 tick 松开）。例如：
 
-## 新增模组联动
+```js
+game.input.key('key.mouse.left').down;
+game.input.binding('key.inventory').pressed;
+```
 
-### 诡厄巫法 / 诡厄巫法：启示录 饰品叠加层（仅Forge）
+按键输入来自模型所属的本机玩家。多人动画通过同步的 Molang 值读取开关状态。查询快捷键名称时，在游戏中执行 `/reimaginedysm keys`。
 
-支持 Goety 的 `unholy_hat`、`unholy_hat_halo`，以及 GR 的 `ascension_halo`、`broken_halo`、`halo_of_the_end`。
+组变换支持 `.move(x, y, z)`、`.rotate(x, y, z)` 和 `.scale(x, y, z)`。单位依次为模型像素、度和缩放倍率。每次动画求值前会还原上次变换。
 
-可添加特殊定位组 `HaloLocator`（不洁圣冠、破碎之环、晋升之环）和 `OdamaneHaloLocator`（终末之环）。饰品使用定位组的枢轴位置、旋转、缩放，并继承全部父级变换。缺少对应定位组时，前三者沿用头部定位，终末之环沿用身体主骨骼。
+玩家速度还可通过 `rysm.longitudinal_speed` 和 `rysm.lateral_speed` 查询。单位为格/秒，方向以玩家水平朝向为准。前者正数向前、负数向后；后者正数向左、负数向右。
 
-模型动画、控制器或 Molang 函数中通过 `ysm.has_any_curios` 检测如上某个饰品 ID 时，该饰品将交由模型自行显示；标签查询 `has_any_curios_with_all_tags` / `has_any_curios_with_any_tag` 同样参与避让。
+## 使用 Blockbench
 
-同时安装 showmeurhalo 时关闭其反射式 YSM 头部适配，并跳过它对已由原生层接管玩家的这些饰品的重复渲染；其他功能保留。
+安装 [分组编辑器](blockbench/README.md)，在模型中选择组，再打开「编辑脚本组属性」。保存后，插件将组效果写入 `rysm/scripts/blockbench.js`。
 
-### 诡厄巫法：星翼幻想 饰品叠加层（仅Forge）
+使用「JavaScript 编辑与预览」编写算法、模拟按键，并查看姿态和星空效果。完整操作见 [Blockbench 使用说明](blockbench/README.md)。
 
-支持 `starfantasy_goety:halo_of_apostle` 标签内的使徒光环和 `starfantasy_goety:halo_of_hades`。通过原模组的 Curios 渲染器保留贴图、动画及特效。
+带中文注释的脚本位于 [示例模型](examples/rysmjs/README.md)：
 
-特殊定位组 `FantasyHaloLocator` 控制这些光环的位置、旋转、缩放及父级变换；缺少时沿用头部定位。
+- [effects.js](examples/rysmjs/source/all-features/rysm/scripts/effects.js)：星空、物理和同组效果叠加。
+- [algorithms.js](examples/rysmjs/source/all-features/rysm/scripts/algorithms.js)：血量、帧宏和多人同步。
+- [events.js](examples/rysmjs/source/all-features/rysm/scripts/events.js)：加载日志、按键开关和姿态。
 
-按 Curios 栏位顺序仅选择最靠前的一个已装备光环；任意栏位装备哈迪斯光环时仅选择最靠前的哈迪斯光环。
 
-### 秘法法术 背后饰品叠加层（仅Forge）
+## 饰品联动
 
-`esoteric_spell:rising_inolia_ring` 使用 `EsotericHaloLocator`。与终末之环一样按身体定位，继承定位组枢轴、旋转、缩放及全部父级变换；缺少定位组时沿用身体主骨骼和原生渲染原点。
+Forge 版可为以下饰品添加模型定位组。定位组的枢轴、旋转、缩放和父组变换决定饰品位置。
 
-### 梦幻终焉 背后饰品叠加层（仅Forge）
+| 模组或饰品 | 定位组 |
+| --- | --- |
+| 诡厄巫法及启示录：不洁圣冠、破碎之环、晋升之环 | `HaloLocator` |
+| 诡厄巫法：启示录，终末之环 | `OdamaneHaloLocator` |
+| 诡厄巫法：星翼幻想，使徒光环、哈迪斯光环 | `FantasyHaloLocator` |
+| 秘法法术：伊始之环 | `EsotericHaloLocator` |
+| 梦幻终焉：泡影之领域 | `FantasyEndingHaloLocator` |
+| 妖怪们的归家：头饰与发饰 | `YoukaiHeadLocator` |
 
-`fantasy_ending:the_domain_of_fade` 使用 `FantasyEndingHaloLocator`，逻辑同秘法法术。
+终末之环、秘法法术和梦幻终焉饰品默认按身体定位，其余按头部定位。为定位组设置变换可调整饰品位置。
 
-### 妖怪们的归家 头饰叠加层（仅Forge）
+模型通过 `ysm.has_any_curios` 检测对应 Goety 饰品时，由模型显示该饰品。标签查询 `has_any_curios_with_all_tags` 和 `has_any_curios_with_any_tag` 同样适用。安装 showmeurhalo 时，这些饰品由本模组的饰品层显示。
 
-允许玩家模型叠加此模组的发饰与头饰。模型存在 `YoukaiHeadLocator` 时，优先使用其枢轴位置、旋转、缩放和父级变换；缺少时使用默认头部骨骼。
+星翼幻想光环按 Curios 栏位顺序选择一个。装备哈迪斯光环时优先显示哈迪斯光环。
 
 ## 构建
 
-构建工具使用 Java 21（游戏及编译产物仍以 Java 17 为目标）。
+构建环境使用 Java 21。编译产物以 Java 17 为目标。
 
-```bash
-./gradlew build
+```powershell
+./gradlew.bat :forge:build :fabric:build
 ```
 
-构建产物位于 `<platform>/build/libs/` 目录下。
+产物位于 `forge/build/libs/` 和 `fabric/build/libs/`。
 
-IDEA 的项目 SDK 与 Gradle JVM 使用 `zulu-21`，源码语言级别和编译目标仍为 Java 17。
+源码检查和示例生成命令见 [示例说明](examples/rysmjs/README.md#开发检查)。
 
-回归检查：`./gradlew :common:checkModelIcons :common:checkModelTransfer`。
+旧 JS 转换工具仅在开发环境提供，用于迁移开发阶段的脚本。
 
-## 开源协议
+## 来源与许可
 
-### 源代码协议
+源码使用 [MIT 许可证](LICENSE.txt)。默认模型使用 CC0，酒狐模型使用 CC BY-NC-SA 4.0。模型的具体条款见对应资源说明。
 
-本项目的源代码采用 MIT License 开放，您可以自由地使用、修改和分发代码，仅需要保留原始的版权声明。
+模型体系来源于 [Yes Steve Model](https://modrinth.com/mod/yes-steve-model)，模型与动画处理使用 [GeckoLib](https://github.com/bernie-g/geckolib)。可选原生渲染库见 [openysm.cpp](https://github.com/OpenYSMDev/openysm.cpp)。
 
-详细的许可证条款请参见 [LICENSE](LICENSE) 文件。
-
-### 模型资源协议
-
-仓库中自带的模型文件采用不同的协议：
-
-- 默认模型: 采用 CC0 (Creative Commons Zero) 协议，完全开放，无任何使用限制
-- 酒狐 (Wine Fox) 模型: 采用 CC BY-NC-SA 4.0 协议，允许非商业使用，需要署名，并且衍生作品需要采用相同协议
-
-请在使用相应模型时严格遵守对应的协议要求。
+默认星空的着色器和纹理来源于 [Avaritia](https://github.com/Morpheus1101/Avaritia/tree/07ce275b46e8afe4d932a0178777591794d7f612)。资源中的 `cosmic/SOURCE.txt` 保存了来源与适配说明。

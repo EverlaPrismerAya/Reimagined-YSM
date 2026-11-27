@@ -7,6 +7,16 @@ import java.util.*;
 /** Literal registration metadata can be inspected on the server without running model code. */
 public final class ScriptDeclarations {
     public record Entry(double fallback, boolean sync) {}
+    /** Only a direct registration in the literal molang event has server-readable metadata. */
+    private static boolean isMolangRegistration(FunctionCall call) {
+        if(call.getTarget().toSource().equals("Rysm.molang"))return true;
+        if(!(call.getTarget() instanceof PropertyGet property) || !property.getProperty().getIdentifier().equals("register") || !(property.getTarget() instanceof Name target))return false;
+        var fn=call.getEnclosingFunction();
+        if(fn==null || fn.getParams().size()!=1 || !(fn.getParams().get(0) instanceof Name parameter) || !parameter.getIdentifier().equals(target.getIdentifier()))return false;
+        if(!(fn.getParent() instanceof FunctionCall owner) || !owner.getTarget().toSource().equals("Rysm.model"))return false;
+        var args=owner.getArguments();
+        return args.size()==2 && args.get(0) instanceof StringLiteral event && event.getValue().equals("molang") && args.get(1)==fn;
+    }
     public static Map<String,Entry> read(ScriptBundle bundle) {
         Map<String,Entry> entries=new LinkedHashMap<>();
         var scripts=bundle.manifest().getAsJsonArray("scripts");
@@ -16,7 +26,7 @@ public final class ScriptDeclarations {
             try{ScriptBundle.checkPath(path);}catch(java.io.IOException e){throw new IllegalArgumentException(e);}
             var env=new CompilerEnvirons();env.setLanguageVersion(Context.VERSION_ES6);
             new Parser(env).parse(bundle.text(path),path,1).visit(node->{
-                if(!(node instanceof FunctionCall call) || !call.getTarget().toSource().equals("Rysm.molang"))return true;
+                if(!(node instanceof FunctionCall call) || !isMolangRegistration(call))return true;
                 var args=call.getArguments();
                 if(args.size()<2 || args.size()>3 || !(args.get(0) instanceof StringLiteral literal))throw new IllegalArgumentException(path+":"+node.getLineno()+": Molang requires a literal name");
                 String name=literal.getValue();double fallback=0;boolean sync=false;

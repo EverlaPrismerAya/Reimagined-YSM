@@ -1,7 +1,8 @@
 {
   "version": 1,
   "scripts": [
-    "scripts/blockbench.js",
-    "scripts/algorithms.js"
+    "scripts/effects.js",
+    "scripts/algorithms.js",
+    "scripts/events.js"
   ]
 }

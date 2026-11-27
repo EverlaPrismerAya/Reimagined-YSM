@@ -16,6 +16,8 @@ public final class ScriptInstance {
     public final ScriptRuntime runtime;
     private final AnimatedGeoModel model;
     private long tick=Long.MIN_VALUE;
+    private long printTick=Long.MIN_VALUE;
+    private int printed;
     private IContext<?> lastContext;
     private final Map<String,Double> synchronizedValues=new LinkedHashMap<>();
     private final Map<IBone,float[]> saved=new IdentityHashMap<>();
@@ -86,14 +88,22 @@ public final class ScriptInstance {
         entity.put("yaw",e==null?0:e.getYRot());entity.put("pitch",e==null?0:e.getXRot());entity.put("local",local);
         var input=runtime.object(Context.getCurrentContext());
         runtime.define(input,"key",args->runtime.snapshot(ScriptInput.get(Context.toString(args[0]),false,local).values()));
-        runtime.define(input,"binding",args->runtime.snapshot(ScriptInput.get(Context.toString(args[0]),true,local).values()));input.sealObject();
+        runtime.define(input,"binding",args->runtime.snapshot(ScriptInput.get(Context.toString(args[0]),true,local).values()));runtime.define(input,"bindings",args->{
+            String filter=args.length==0?"":Context.toString(args[0]);
+            Object[] bindings=ScriptKeyLogger.bindings(filter).stream().map(runtime::snapshot).toArray();
+            return Context.getCurrentContext().newArray(input,bindings);
+        });input.sealObject();
         double ticks=e==null?ScriptInput.tick:e.tickCount;ticks+=ctx.animationEvent().getFrameTime();
         var camera=mc.gameRenderer.getMainCamera();
-        var out=runtime.object(Context.getCurrentContext());
+        var out=runtime.game(message->{
+            if(local) {
+                if(printTick!=ScriptInput.tick){printTick=ScriptInput.tick;printed=0;}
+                if(printed++<16)mc.gui.getChat().addMessage(net.minecraft.network.chat.Component.literal(message));
+            }
+        });
         ScriptableObject.putProperty(out,"entity",runtime.snapshot(entity));ScriptableObject.putProperty(out,"input",input);
         ScriptableObject.putProperty(out,"time",runtime.snapshot(Map.of("ticks",ticks,"seconds",ticks/20)));
         ScriptableObject.putProperty(out,"camera",runtime.snapshot(Map.of("yaw",camera.getYRot(),"pitch",camera.getXRot())));
-        ScriptableObject.putProperty(out,"state",runtime.state());
         runtime.define(out,"molang",args->{
             if(args.length!=1)throw new IllegalArgumentException("molang expects one query string");
             String text=Context.toString(args[0]);if(text.length()>4096||expressions.size()>256)throw new IllegalArgumentException("Molang bridge limit");
@@ -103,7 +113,7 @@ public final class ScriptInstance {
             return (double)value.evalAsFloat(ExpressionEvaluator.evaluator(ctx));
         });
         runtime.define(out,"group",args->{
-            if(!pose)throw new IllegalArgumentException("Group transforms are only available in Rysm.pose");
+            if(!pose)throw new IllegalArgumentException("Group transforms are only available in Rysm.model('pose', callback)");
             IBone bone=model.bones().get(StringPool.computeIfAbsent(Context.toString(args[0])));
             if(bone==null)throw new IllegalArgumentException("Unknown group: "+Context.toString(args[0]));
             var group=runtime.object(Context.getCurrentContext());

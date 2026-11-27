@@ -32,7 +32,9 @@ public final class GroupEffectRenderer {
     private static int material, materialCosmic, atlas, atlasFbo, atlasSize, entityVao, entityVbo;
     private static final Matrix4f entityIdentity=new Matrix4f();
     private static int currentProgram;
-    private static int skinSurface,skinCosmic,skinMaterial,entityCompute;
+    private static int silhouetteTexture,silhouetteFbo,silhouetteWidth,silhouetteHeight;
+    private static final int[] silhouetteViewport=new int[4];
+    private static int skinSurface,skinCosmic,skinMaterial,entityCompute,solidsCompute;
     private static final Map<Integer,Map<String,Integer>> uniformLocations=new HashMap<>();
     private static boolean failed;
     private static final List<int[]> frames=new ArrayList<>();
@@ -76,7 +78,7 @@ public final class GroupEffectRenderer {
                                   ResourceLocation texture,boolean preview,boolean dynamicOnly) {
         if(model.bakedBones==null || !compile()) return false;
         if(!dynamicOnly && GpuCapability.isAvailable() && com.elfmcys.yesstevemodel.NativeLibLoader.isLoaded()) {
-            try(var saved=new DrawState();var compute=new ShaderUtil.SavedComputeState(3)) {
+            try(var saved=new DrawState();var compute=new ShaderUtil.SavedComputeState(6)) {
                 if(renderGpu(pose,model,params,textureIndex,part,light,overlay,r,g,b,alpha,texture,preview)) {
                     if(model.hasFacingCameraBones || model.hasFrameAnimations) render(pose,model,params,state,textureIndex,part,light,overlay,r,g,b,alpha,texture,preview,true);
                     return true;
@@ -194,6 +196,7 @@ public final class GroupEffectRenderer {
             GpuRenderPath.updateBoneVisibility(model.bakedBones,cpu,instance.boneBuffer);
             instance.boneBuffer.position(0).limit(mesh.boneCount*144);instance.uploadBones();bones=instance.boneSsbo;
         }
+        prepareGpuSurfaces(mesh.groups,instance,bones,part);
         GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,0,bones);
         GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,1,mesh.groups.vbo);
         var mc=Minecraft.getInstance();
@@ -202,6 +205,7 @@ public final class GroupEffectRenderer {
             GlStateManager._activeTexture(GL13.GL_TEXTURE0+unit);GlStateManager._bindTexture(RenderSystem.getShaderTexture(unit));
         }
         GlStateManager._activeTexture(GL13.GL_TEXTURE0);GlStateManager._bindTexture(mc.getTextureManager().getTexture(texture).getId());
+        if(!net.everla.reimaginedysm.compat.oculus.OculusCompat.isRenderingShadowPass()) prepareGpuSilhouette(model,mesh.groups,part);
         RenderSystem.enableDepthTest();RenderSystem.depthFunc(GL11.GL_LEQUAL);RenderSystem.disableCull();
         if(net.everla.reimaginedysm.compat.oculus.OculusCompat.isShaderPackInUse())
             drawGpuMaterials(model,mesh.groups,instance,bones,textureIndex,part,light,overlay,r,g,b,alpha,texture,preview);
@@ -215,7 +219,7 @@ public final class GroupEffectRenderer {
                     var bone=model.bakedBones.get(range.bone());
                     if(part!=0 && bone.partMask!=part && bone.partMask!=3) continue;
                     int program=bone.style.cosmic()?skinCosmic:skinSurface;
-                    bind(program);uniform(program,"materialPass",0);uniform(program,"alphaMode",pass);
+                    bind(program);gpuSurfaceUniforms(program,mesh.groups);uniform(program,"materialPass",0);uniform(program,"alphaMode",pass);
                     GL20.glUniform4f(location(program,"color"),r,g,b,alpha);
                     if(bone.style.cosmic()) cosmicUniforms(program,bone.style,preview,light,model,bone.cosmicEffect);
                     else {surfaceUniforms(program,light,overlay);uniform(program,"mode",0);uniform(program,"glowing",bone.glow?1:0);}
@@ -227,15 +231,74 @@ public final class GroupEffectRenderer {
         return true;
     }
 
+    static String gpuFragment(String fragment) throws java.io.IOException {
+        String source=ShaderUtil.loadResource(fragment).replace("in vec3 position;", "").replace("in vec3 normal;", "");
+        source=source.replace("#version 150", "#version 430 core\n"+ShaderUtil.loadResource("/group_clip.glsl"));
+        source=source.replace("if(tex.a<0.1) discard;", "if(tex.a<0.1) discard; if(tex.a<0.99 && rysmInterior()) discard;");
+        source=source.replace("if(mask.a<0.1) discard;", "if(mask.a<0.1) discard; if(mask.a<0.99 && rysmInterior()) discard;");
+        if(fragment.equals("/group_surface.fsh"))source=source.replace("vec3 n=normalize(normal);", "if(mode==1 && rysmOutlineMasked()) discard; if(mode==2){fragColor=vec4(1);return;} vec3 n=normalize(normal);");
+        if(fragment.equals("/group_material.fsh"))source=source.replace("fragColor=maskOnly?", "if(maskOnly && rysmOutlineMasked()){fragColor=vec4(0);return;} fragColor=maskOnly?");
+        return source;
+    }
     private static int skinProgram(String fragment) {
         try {return ShaderUtil.linkProgram(ShaderUtil.compileShaderFromResource(GL20.GL_VERTEX_SHADER,"/group_skin.vsh"),
-                ShaderUtil.compileShaderFromResource(GL20.GL_FRAGMENT_SHADER,fragment));}
+                ShaderUtil.compileShader(GL20.GL_FRAGMENT_SHADER,gpuFragment(fragment),fragment));}
         catch(Exception ex) {throw new IllegalStateException("Cannot compile GPU group shader",ex);}
+    }
+    private static void gpuSurfaceUniforms(int program,GroupGpuMesh mesh) {
+        uniform(program,"surfaceClipping",mesh.hasTranslucentFaces?1:0);uniform(program,"solidCount",mesh.solidCount);
+        uniform(program,"silhouetteMaskEnabled",0);
+    }
+    private static void prepareGpuSurfaces(GroupGpuMesh mesh,GpuPose instance,int bones,int part) {
+        if(mesh.solidCount==0 || !mesh.hasTranslucentFaces)return;
+        if(solidsCompute==0)try {solidsCompute=ShaderUtil.linkProgram(ShaderUtil.compileShaderFromResource(GL43.GL_COMPUTE_SHADER,"/group_solids.csh"));}
+        catch(Exception ex){throw new IllegalStateException("Cannot compile GPU surface union",ex);}
+        instance.ensureSurfaceBuffers(mesh);
+        GlStateManager._glUseProgram(solidsCompute);uniform(solidsCompute,"solidCount",mesh.solidCount);uniform(solidsCompute,"part",part);
+        GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,0,bones);GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,3,mesh.solids);
+        GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,4,instance.surfaceSolids);GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,5,instance.surfaceNeighbors);
+        for(int stage=0;stage<2;stage++) {
+            uniform(solidsCompute,"stage",stage);GL43.glDispatchCompute((mesh.solidCount+63)/64,1,1);
+            GL43.glMemoryBarrier(GL43.GL_SHADER_STORAGE_BARRIER_BIT);
+        }
+    }
+
+    private static void prepareGpuSilhouette(GeoModel model,GroupGpuMesh mesh,int part) {
+        if(model.bakedBones.stream().noneMatch(b->b.style.outline() && b.style.outlineWidth()>0))return;
+        int framebuffer=GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+        GL11.glGetIntegerv(GL11.GL_VIEWPORT,silhouetteViewport);
+        if(silhouetteTexture==0){silhouetteTexture=GL11.glGenTextures();silhouetteFbo=GL30.glGenFramebuffers();}
+        GlStateManager._activeTexture(GL13.GL_TEXTURE0+4);GlStateManager._bindTexture(silhouetteTexture);
+        if(silhouetteWidth!=silhouetteViewport[2] || silhouetteHeight!=silhouetteViewport[3]) {
+            silhouetteWidth=silhouetteViewport[2];silhouetteHeight=silhouetteViewport[3];
+            GL11.glTexImage2D(GL11.GL_TEXTURE_2D,0,GL30.GL_R8,silhouetteWidth,silhouetteHeight,0,GL11.GL_RED,GL11.GL_UNSIGNED_BYTE,(ByteBuffer)null);
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D,GL11.GL_TEXTURE_MIN_FILTER,GL11.GL_NEAREST);GL11.glTexParameteri(GL11.GL_TEXTURE_2D,GL11.GL_TEXTURE_MAG_FILTER,GL11.GL_NEAREST);
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D,GL11.GL_TEXTURE_WRAP_S,GL13.GL_CLAMP_TO_BORDER);GL11.glTexParameteri(GL11.GL_TEXTURE_2D,GL11.GL_TEXTURE_WRAP_T,GL13.GL_CLAMP_TO_BORDER);
+        }
+        GlStateManager._activeTexture(GL13.GL_TEXTURE0);
+        GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER,silhouetteFbo);
+        GL30.glFramebufferTexture2D(GL30.GL_DRAW_FRAMEBUFFER,GL30.GL_COLOR_ATTACHMENT0,GL11.GL_TEXTURE_2D,silhouetteTexture,0);
+        if(GL30.glCheckFramebufferStatus(GL30.GL_DRAW_FRAMEBUFFER)!=GL30.GL_FRAMEBUFFER_COMPLETE)throw new IllegalStateException("Incomplete GPU silhouette framebuffer");
+        GL11.glViewport(0,0,silhouetteWidth,silhouetteHeight);
+        boolean scissor=GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);GL11.glDisable(GL11.GL_SCISSOR_TEST);
+        RenderSystem.disableDepthTest();RenderSystem.disableBlend();RenderSystem.disableCull();RenderSystem.colorMask(true,true,true,true);
+        GL30.glClearBufferfv(GL11.GL_COLOR,0,new float[]{0,0,0,0});
+        bind(skinSurface);gpuSurfaceUniforms(skinSurface,mesh);uniform(skinSurface,"materialPass",0);uniform(skinSurface,"mode",2);uniform(skinSurface,"alphaMode",0);
+        GL20.glUniform4f(location(skinSurface,"color"),1,1,1,1);GL30.glBindVertexArray(mesh.vao);
+        for(var range:mesh.ranges){var bone=model.bakedBones.get(range.bone());if(part==0 || bone.partMask==part || bone.partMask==3)GL11.glDrawArrays(GL11.GL_TRIANGLES,range.first(),range.count());}
+        if(scissor)GL11.glEnable(GL11.GL_SCISSOR_TEST);
+        GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER,framebuffer);GL11.glViewport(silhouetteViewport[0],silhouetteViewport[1],silhouetteWidth,silhouetteHeight);
+    }
+    private static void outlineMaskUniforms(int program,boolean atlasPass,Matrix4f projection) {
+        uniform(program,"silhouetteMaskEnabled",1);uniform(program,"silhouetteAtlas",atlasPass?1:0);uniform(program,"silhouetteMask",4);
+        GL20.glUniform4f(location(program,"silhouetteViewport"),silhouetteViewport[0],silhouetteViewport[1],silhouetteWidth,silhouetteHeight);
+        GL20.glUniformMatrix4fv(location(program,"silhouetteProjection"),false,projection.get(new float[16]));
+        GlStateManager._activeTexture(GL13.GL_TEXTURE0+4);GlStateManager._bindTexture(silhouetteTexture);GlStateManager._activeTexture(GL13.GL_TEXTURE0);
     }
 
     private static void drawGpuOutlines(GeoModel model,GroupGpuMesh mesh,int part,int textureIndex,int light,int overlay,float alpha) {
-        bind(skinSurface);uniform(skinSurface,"materialPass",0);uniform(skinSurface,"mode",1);uniform(skinSurface,"alphaMode",0);
-        surfaceUniforms(skinSurface,light,overlay);GL20.glUniform4f(location(skinSurface,"color"),1,1,1,alpha);
+        bind(skinSurface);gpuSurfaceUniforms(skinSurface,mesh);uniform(skinSurface,"materialPass",0);uniform(skinSurface,"mode",1);uniform(skinSurface,"alphaMode",0);
+        surfaceUniforms(skinSurface,light,overlay);outlineMaskUniforms(skinSurface,false,RenderSystem.getProjectionMatrix());GL20.glUniform4f(location(skinSurface,"color"),1,1,1,alpha);
         RenderSystem.enableBlend();RenderSystem.defaultBlendFunc();
         int[] viewport=new int[4];GL11.glGetIntegerv(GL11.GL_VIEWPORT,viewport);
         for(int pass=1;pass<=2;pass++) {
@@ -284,7 +347,7 @@ public final class GroupEffectRenderer {
             var bone=model.bakedBones.get(range.bone());
             if(part!=0 && bone.partMask!=part && bone.partMask!=3) continue;
             int program=band!=2 && bone.style.cosmic()?skinCosmic:skinMaterial;
-            bind(program);uniform(program,"materialPass",1);uniform(program,"atlasColumns",columns);
+            bind(program);gpuSurfaceUniforms(program,mesh);uniform(program,"materialPass",1);uniform(program,"atlasColumns",columns);
             uniform(program,"atlasTriangles",triangles);uniform(program,"atlasBand",band);uniform(program,"atlasTileSize",tile);
             uniform(program,"alphaMode",band==2?0:band+1);GL20.glUniform4f(location(program,"color"),1,1,1,1);
             if(program==skinCosmic) {cosmicUniforms(program,bone.style,preview,light,model,bone.cosmicEffect);scalar(program,"lightmix",0);}
@@ -309,10 +372,10 @@ public final class GroupEffectRenderer {
                 if((part!=0 && bone.partMask!=part && bone.partMask!=3) || !bone.style.outline() || bone.style.outlineWidth()==0) continue;
                 float width=bone.style.outlineWidth();int steps=(int)Math.ceil(width),color=outlineColor(model,range.bone(),textureIndex);
                 for(int dy=-steps;dy<=steps;dy++) for(int dx=-steps;dx<=steps;dx++) if(dx!=0 || dy!=0) {
-                    Matrix4f shifted=new Matrix4f(RenderSystem.getProjectionMatrix()).invert()
-                            .mul(new Matrix4f().translation(dx*width/steps*2f/viewport[2],dy*width/steps*2f/viewport[3],.00001f))
-                            .mul(RenderSystem.getProjectionMatrix());
-                    GlStateManager._glUseProgram(entityCompute);uniform(entityCompute,"outlineFirst",range.first());uniform(entityCompute,"outlineCount",range.count());
+                    Matrix4f projected=new Matrix4f().translation(dx*width/steps*2f/viewport[2],dy*width/steps*2f/viewport[3],.00001f).mul(RenderSystem.getProjectionMatrix());
+                    bakeGpuOutline(mesh,range,bones,triangles,columns,tile,projected,framebuffer,viewport,texture);
+                    Matrix4f shifted=new Matrix4f(RenderSystem.getProjectionMatrix()).invert().mul(projected);
+                    GlStateManager._glUseProgram(entityCompute);GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,0,mesh.vbo);GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,1,instance.groupVbo());GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,2,bones);uniform(entityCompute,"outlineFirst",range.first());uniform(entityCompute,"outlineCount",range.count());
                     GL20.glUniformMatrix4fv(location(entityCompute,"outlineTransform"),false,shifted.get(new float[16]));dispatchGroupEntity(mesh.vertices);
                     gpuEntityRange(instance,mesh.vertices,range,2,texture,false,true,((color>>16)&255)/255f,((color>>8)&255)/255f,(color&255)/255f,alpha);
                 }
@@ -320,6 +383,18 @@ public final class GroupEffectRenderer {
         }
         gpuEntityPass(model,mesh,instance,part,0,texture,false,true,r,g,b,alpha);
         if(model.isTranslucentTexture(textureIndex)) gpuEntityPass(model,mesh,instance,part,1,texture,false,false,r,g,b,alpha);
+    }
+
+    private static void bakeGpuOutline(GroupGpuMesh mesh,GroupGpuMesh.Range range,int bones,int triangles,int columns,int tile,Matrix4f projected,int framebuffer,int[] viewport,ResourceLocation texture) {
+        GlStateManager._activeTexture(GL13.GL_TEXTURE0);GlStateManager._bindTexture(Minecraft.getInstance().getTextureManager().getTexture(texture).getId());
+        GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER,atlasFbo);GL11.glViewport(0,0,atlasSize,atlasSize);
+        RenderSystem.disableDepthTest();RenderSystem.disableBlend();RenderSystem.colorMask(true,true,true,true);
+        GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,0,bones);GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,1,mesh.vbo);
+        bind(skinMaterial);gpuSurfaceUniforms(skinMaterial,mesh);outlineMaskUniforms(skinMaterial,true,projected);
+        uniform(skinMaterial,"materialPass",1);uniform(skinMaterial,"maskOnly",1);uniform(skinMaterial,"atlasColumns",columns);
+        uniform(skinMaterial,"atlasTriangles",triangles);uniform(skinMaterial,"atlasBand",2);uniform(skinMaterial,"atlasTileSize",tile);uniform(skinMaterial,"alphaMode",0);
+        GL30.glBindVertexArray(mesh.vao);GL11.glDrawArrays(GL11.GL_TRIANGLES,range.first(),range.count());
+        GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER,framebuffer);GL11.glViewport(viewport[0],viewport[1],viewport[2],viewport[3]);
     }
 
     private static void dispatchGroupEntity(int count) {
@@ -737,16 +812,19 @@ public final class GroupEffectRenderer {
     }
 
     public static void shutdown() {
-        for(int program:new int[]{surface,cosmic,material,materialCosmic,skinSurface,skinCosmic,skinMaterial,entityCompute}) if(program!=0) GL20.glDeleteProgram(program);
+        for(int program:new int[]{surface,cosmic,material,materialCosmic,skinSurface,skinCosmic,skinMaterial,entityCompute,solidsCompute}) if(program!=0) GL20.glDeleteProgram(program);
         for(int buffer:new int[]{vbo,entityVbo}) if(buffer!=0) GL15.glDeleteBuffers(buffer);
         for(int array:new int[]{vao,entityVao}) if(array!=0) GL30.glDeleteVertexArrays(array);
+        if(silhouetteFbo!=0)GL30.glDeleteFramebuffers(silhouetteFbo);
+        if(silhouetteTexture!=0)GlStateManager._deleteTexture(silhouetteTexture);
+        silhouetteFbo=silhouetteTexture=silhouetteWidth=silhouetteHeight=0;
         if(atlasFbo!=0) GL30.glDeleteFramebuffers(atlasFbo);
         if(atlas!=0) GlStateManager._deleteTexture(atlas);
         if(stars!=0) GL11.glDeleteTextures(stars);
         net.everla.ysmJsLib.CosmicTextures.clear();
         pixels.forEach(MemoryUtil::memFree);pixels.clear();frames.clear();
         surface=cosmic=material=materialCosmic=vbo=entityVbo=vao=entityVao=atlasFbo=atlas=atlasSize=stars=0;
-        skinSurface=skinCosmic=skinMaterial=entityCompute=0;
+        skinSurface=skinCosmic=skinMaterial=entityCompute=solidsCompute=0;
         uniformLocations.clear();
         failed=false;
     }
@@ -765,13 +843,13 @@ public final class GroupEffectRenderer {
         final boolean blend=GL11.glIsEnabled(GL11.GL_BLEND),depth=GL11.glIsEnabled(GL11.GL_DEPTH_TEST),cull=GL11.glIsEnabled(GL11.GL_CULL_FACE),
                 depthMask=GL11.glGetBoolean(GL11.GL_DEPTH_WRITEMASK);
         final byte[] mask=new byte[4];final int starTex;
-        final int[] textures=new int[3],shaderTextures=new int[3];
+        final int[] textures=new int[5],shaderTextures=new int[5];
         DrawState() {
             GL11.glGetIntegerv(GL11.GL_VIEWPORT,viewport);
             GL20.glGetVertexAttribfv(1,GL20.GL_CURRENT_VERTEX_ATTRIB,attributeColor);
             ByteBuffer bytes=MemoryUtil.memAlloc(4);
             try {GL11.glGetBooleanv(GL11.GL_COLOR_WRITEMASK,bytes);bytes.get(mask);} finally {MemoryUtil.memFree(bytes);}
-            for(int i=0;i<3;i++) {
+            for(int i=0;i<5;i++) {
                 GlStateManager._activeTexture(GL13.GL_TEXTURE0+i);textures[i]=GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
                 shaderTextures[i]=RenderSystem.getShaderTexture(i);
             }
@@ -785,7 +863,7 @@ public final class GroupEffectRenderer {
             RenderSystem.setShader(()->shader);
             GlStateManager._glUseProgram(program);GL30.glBindVertexArray(array);GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER,buffer);
             com.mojang.blaze3d.vertex.BufferUploader.invalidate();
-            for(int i=0;i<3;i++) {
+            for(int i=0;i<5;i++) {
                 RenderSystem.setShaderTexture(i,shaderTextures[i]);
                 GlStateManager._activeTexture(GL13.GL_TEXTURE0+i);GlStateManager._bindTexture(textures[i]);
             }

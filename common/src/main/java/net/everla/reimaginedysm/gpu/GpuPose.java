@@ -15,6 +15,7 @@ public final class GpuPose implements AutoCloseable {
     public final ByteBuffer boneBuffer;
     private int xformVbo, xformVao;
     private int groupVbo,groupVao;
+    public int surfaceSolids,surfaceNeighbors;
     private boolean closed;
 
     GpuPose(float[] parameters, int boneCount) {
@@ -29,6 +30,16 @@ public final class GpuPose implements AutoCloseable {
     public int xformVao() { return xformVao; }
     public int groupVbo() { return groupVbo; }
     public int groupVao() { return groupVao; }
+
+    public void ensureSurfaceBuffers(GroupGpuMesh mesh) {
+        if(surfaceSolids!=0)return;
+        long words=(mesh.solidCount+31L)/32,bytes=Math.max(4,mesh.solidCount*words*4);
+        if(bytes>GL32.glGetInteger64(GL43.GL_MAX_SHADER_STORAGE_BLOCK_SIZE))throw new IllegalStateException("GPU surface adjacency exceeds device storage limit");
+        surfaceSolids=GL15.glGenBuffers();GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER,surfaceSolids);
+        GL15.glBufferData(GL43.GL_SHADER_STORAGE_BUFFER,Math.max(144L,mesh.solidCount*144L),GL15.GL_DYNAMIC_DRAW);
+        surfaceNeighbors=GL15.glGenBuffers();GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER,surfaceNeighbors);
+        GL15.glBufferData(GL43.GL_SHADER_STORAGE_BUFFER,bytes,GL15.GL_DYNAMIC_DRAW);
+    }
 
     public void ensureGroupBuffers(GroupGpuMesh mesh) {
         if(groupVao!=0) return;
@@ -82,6 +93,8 @@ public final class GpuPose implements AutoCloseable {
         GlStateManager._glDeleteBuffers(boneSsbo);
         if (xformVbo != 0) GlStateManager._glDeleteBuffers(xformVbo);
         if (xformVao != 0) GL30.glDeleteVertexArrays(xformVao);
+        if(surfaceSolids!=0)GL15.glDeleteBuffers(surfaceSolids);
+        if(surfaceNeighbors!=0)GL15.glDeleteBuffers(surfaceNeighbors);
         if(groupVbo!=0) GL15.glDeleteBuffers(groupVbo);
         if(groupVao!=0) GL30.glDeleteVertexArrays(groupVao);
         MemoryUtil.memFree(boneBuffer);

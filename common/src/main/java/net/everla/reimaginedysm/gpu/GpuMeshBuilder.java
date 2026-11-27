@@ -59,7 +59,7 @@ public final class GpuMeshBuilder {
 
         GpuMesh mesh=new GpuMesh(handle, vao, vbo, ibo, vertexCount, indexCount, boneCount, meta[3], meta[4], meta[5], meta[6], meta[7], meta[8]);
         try {
-            if(model.hasGroupStyles) mesh.groups=new GroupGpuMesh(vbuf,ibuf);
+            if(model.hasGroupStyles || model.bakedBones.stream().anyMatch(b->b.cubes.stream().anyMatch(c->c.quads.stream().anyMatch(q->q.isTranslucent)))) mesh.groups=new GroupGpuMesh(model);
         } finally {GeoModel.nReleaseGpuMeshScratch(handle);}
         return mesh;
     }

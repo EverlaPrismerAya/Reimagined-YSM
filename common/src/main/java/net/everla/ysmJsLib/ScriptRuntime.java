@@ -3,7 +3,6 @@ package net.everla.ysmJsLib;
 import com.google.gson.*;
 import org.mozilla.javascript.*;
 import java.util.*;
-import java.util.function.BiFunction;
 
 /** Each instance owns its JS scope; Java objects are never wrapped for script access. */
 public final class ScriptRuntime {
@@ -94,24 +93,10 @@ public final class ScriptRuntime {
             for(String key:List.of("eval","Function","Packages","java","javax","org","com","getClass","RegExp"))ScriptableObject.deleteProperty(scope,key);
             var api=object(cx);
             define(api,"logKeyBindings",args -> {if(registering)logKeyBindingsRequested=true;return null;});
+            define(api,"model",this::model);
             define(api,"group",args -> {register(groups,args);return null;});
             define(api,"cosmic",args -> {register(cosmic,args);return null;});
-            define(api,"molang",args -> {
-                if(!registering)throw new IllegalStateException("Registration is closed");
-                if(args.length<2 || !(args[1] instanceof org.mozilla.javascript.Function f))throw new IllegalArgumentException("Expected Molang callback");
-                String name=name(args[0]);
-                if(!name.matches("[a-z_][a-z0-9_]*"))throw new IllegalArgumentException("Molang name must be a lowercase identifier without rysmjs. prefix");
-                double fallback=0;
-                boolean sync=false;
-                if(args.length>2 && args[2] instanceof Scriptable options) {
-                    Object v=ScriptableObject.getProperty(options,"fallback");if(v!=Scriptable.NOT_FOUND)fallback=finite(v);
-                    Object s=ScriptableObject.getProperty(options,"sync");
-                    if(s!=Scriptable.NOT_FOUND){if(!(s instanceof Boolean))throw new IllegalArgumentException("sync must be boolean");sync=(Boolean)s;}
-                }
-                if(sync && f instanceof NativeFunction fn && fn.getLength()>1)throw new IllegalArgumentException("Synchronized Molang cannot accept numeric arguments");
-                if(molang.putIfAbsent(name,new Molang(f,fallback,sync))!=null)throw new IllegalArgumentException("Duplicate Molang: "+name);
-                if(molang.size()>256)throw new IllegalArgumentException("Too many Molang registrations");return null;
-            });
+            define(api,"molang",this::registerMolang);
             define(api,"update",args -> {updates.add(callback(args));return null;});
             define(api,"pose",args -> {poses.add(callback(args));return null;});
             api.sealObject();ScriptableObject.defineProperty(scope,"Rysm",api,ScriptableObject.READONLY|ScriptableObject.PERMANENT);
@@ -138,18 +123,87 @@ public final class ScriptRuntime {
             registering=false;state=cx.newObject(scope);return null;
         });
     }
+    private Object model(Object[] args) {
+        if(!registering)throw new IllegalStateException("Registration is closed");
+        if(args.length!=2 || !(args[0] instanceof CharSequence) || !(args[1] instanceof org.mozilla.javascript.Function f))
+            throw new IllegalArgumentException("Expected Rysm.model(eventName, callback)");
+        String type=Context.toString(args[0]);
+        if(type.equals("tick") || type.equals("pose")) {
+            (type.equals("tick")?updates:poses).add(callback(new Object[]{f}));return null;
+        }
+        var event=object(Context.getCurrentContext());
+        switch(type) {
+            case "group_modifier" -> define(event,"modify",this::modifyGroup);
+            case "molang" -> define(event,"register",this::registerMolang);
+            case "cosmic" -> define(event,"register",values->{register(cosmic,values);return null;});
+            case "load" -> define(event,"logKeyBindings",values->{if(registering)logKeyBindingsRequested=true;return null;});
+            default -> throw new IllegalArgumentException("Unknown model event: "+type);
+        }
+        event.sealObject();f.call(Context.getCurrentContext(),scope,scope,new Object[]{event});return null;
+    }
+    private Object modifyGroup(Object[] values) {
+        if(!registering)throw new IllegalStateException("Registration is closed");
+        if(values.length<1 || values.length>2)throw new IllegalArgumentException("Expected group name and optional properties");
+        String group=name(values[0]);
+        if(!groups.containsKey(group) && groups.size()>=512)throw new IllegalArgumentException("Too many registrations");
+        groups.computeIfAbsent(group,key->new JsonObject());
+        if(values.length==2)mergeGroup(group,properties(values[1]));
+        var builder=object(Context.getCurrentContext());
+        for(String key:List.of("physics","end","collider","glow","item","facingCamera","cosmic","outline","frameAnimation"))
+            define(builder,key,options -> {
+                if(!registering)throw new IllegalStateException("Registration is closed");
+                if(options.length>1)throw new IllegalArgumentException("Expected one effect value");
+                var patch=new JsonObject();
+                Object value=options.length==0?Boolean.TRUE:options[0];
+                if(value instanceof Boolean b)patch.addProperty(key,b);
+                else patch.add(key,properties(value));
+                mergeGroup(group,patch);return builder;
+            });
+        builder.sealObject();return builder;
+    }
+    private Object registerMolang(Object[] args) {
+        if(!registering)throw new IllegalStateException("Registration is closed");
+        if(args.length<2 || args.length>3 || !(args[1] instanceof org.mozilla.javascript.Function f))throw new IllegalArgumentException("Expected Molang callback");
+        String name=name(args[0]);
+        if(!name.matches("[a-z_][a-z0-9_]*"))throw new IllegalArgumentException("Molang name must be a lowercase identifier without rysmjs. prefix");
+        double fallback=0;
+        boolean sync=false;
+        if(args.length>2 && args[2] instanceof Scriptable options) {
+            Object v=ScriptableObject.getProperty(options,"fallback");if(v!=Scriptable.NOT_FOUND)fallback=finite(v);
+            Object s=ScriptableObject.getProperty(options,"sync");
+            if(s!=Scriptable.NOT_FOUND){if(!(s instanceof Boolean))throw new IllegalArgumentException("sync must be boolean");sync=(Boolean)s;}
+        }
+        if(sync && f instanceof NativeFunction fn && fn.getLength()>1)throw new IllegalArgumentException("Synchronized Molang cannot accept numeric arguments");
+        if(molang.putIfAbsent(name,new Molang(f,fallback,sync))!=null)throw new IllegalArgumentException("Duplicate Molang: "+name);
+        if(molang.size()>256)throw new IllegalArgumentException("Too many Molang registrations");return null;
+    }
     private org.mozilla.javascript.Function callback(Object[] args) {
         if(!registering)throw new IllegalStateException("Registration is closed");
         if(args.length!=1 || !(args[0] instanceof org.mozilla.javascript.Function f) || updates.size()+poses.size()>=64)
             throw new IllegalArgumentException("Expected callback (maximum 64)");return f;
     }
+    private JsonObject properties(Object value) {
+        if(!(value instanceof Scriptable))throw new IllegalArgumentException("Expected properties object");
+        String text=Context.toString(NativeJSON.stringify(Context.getCurrentContext(),scope,value,null,null));
+        if(text.length()>65536)throw new IllegalArgumentException("Registration too large");
+        return JsonParser.parseString(text).getAsJsonObject();
+    }
+    private void mergeGroup(String name,JsonObject patch) {
+        var merged=groups.get(name).deepCopy();
+        for(var entry:patch.entrySet()) {
+            String key=entry.getKey();var value=entry.getValue();
+            if(value.isJsonObject() && merged.has(key) && merged.get(key).isJsonObject())
+                for(var field:value.getAsJsonObject().entrySet())merged.getAsJsonObject(key).add(field.getKey(),field.getValue());
+            else merged.add(key,value);
+        }
+        if(merged.toString().length()>65536)throw new IllegalArgumentException("Registration too large");
+        groups.put(name,merged);
+    }
     private void register(Map<String,JsonObject> target,Object[] args) {
         if(!registering)throw new IllegalStateException("Registration is closed");
         if(args.length!=2 || !(args[1] instanceof Scriptable))throw new IllegalArgumentException("Expected name and properties");
         String name=name(args[0]);
-        Object json=NativeJSON.stringify(Context.getCurrentContext(),scope,args[1],null,null);
-        String text=Context.toString(json);if(text.length()>65536)throw new IllegalArgumentException("Registration too large");
-        if(target.putIfAbsent(name,JsonParser.parseString(text).getAsJsonObject())!=null)throw new IllegalArgumentException("Duplicate registration: "+name);
+        if(target.putIfAbsent(name,properties(args[1]))!=null)throw new IllegalArgumentException("Duplicate registration: "+name);
         if(target.size()>512)throw new IllegalArgumentException("Too many registrations");
     }
     private static String name(Object value) {
@@ -202,6 +256,22 @@ public final class ScriptRuntime {
     public void callbacks(boolean pose,java.util.function.Function<Context,Scriptable> context) {
         try {run(cx -> {for(var f:pose?poses:updates)f.call(cx,scope,scope,new Object[]{context.apply(cx)});return null;});}
         catch(BudgetExceeded|RuntimeException e){warn(pose?"pose":"update",e);}
+    }
+    public ScriptableObject game(java.util.function.Consumer<String> output) {
+        var game=object(Context.getCurrentContext());
+        ScriptableObject.putProperty(game,"model",snapshot(Map.of("state",state)));
+        define(game,"print",args->{output.accept(message(args));return null;});
+        return game;
+    }
+    private String message(Object[] args) {
+        var text=new StringBuilder();
+        for(Object arg:args) {
+            if(!text.isEmpty())text.append(' ');
+            Object value=arg instanceof Scriptable?NativeJSON.stringify(Context.getCurrentContext(),scope,arg,null,null):arg;
+            text.append(Context.toString(value));
+            if(text.length()>4096){text.setLength(4096);break;}
+        }
+        return text.toString();
     }
     public Scriptable state(){return state;}
     public void warn(String callback,Throwable e) {

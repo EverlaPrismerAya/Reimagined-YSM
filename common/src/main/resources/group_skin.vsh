@@ -15,6 +15,7 @@ out vec3 position;
 out vec2 uv;
 out vec4 vertexColor;
 out vec3 normal;
+flat out uint surfaceCube;
 vec4 projected(uint index) {
     uint base=index*8u;
     vec3 p=vec3(uintBitsToFloat(source[base]),uintBitsToFloat(source[base+1u]),uintBitsToFloat(source[base+2u]));
@@ -25,6 +26,7 @@ void main() {
     position=(b.transform*vec4(Position,1)).xyz;
     normal=normalize(mat3(b.normal)*Normal.xyz);
     uv=UV0;vertexColor=color;
+    surfaceCube=source[uint(gl_VertexID)*8u+7u];
     gl_Position=Projection*vec4(position,1);
     if(materialPass) {
         int triangle=gl_VertexID/3+atlasBand*atlasTriangles;
