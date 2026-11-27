@@ -10,6 +10,7 @@ public final class ServerStartupEvent {
     }
 
     public static void register() {
+        LifecycleEvent.SERVER_STOPPED.register(server -> net.everla.ysmJsLib.ScriptSync.clearServer());
         LifecycleEvent.SERVER_BEFORE_START.register(server -> {
             if (!YesSteveModel.isAvailable()) {
                 return;

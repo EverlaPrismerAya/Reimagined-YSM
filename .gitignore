@@ -115,7 +115,9 @@ tools/
 .env
 .env.*
 /scripts/
-/docs/
+/docs/*
 /common/logs/
 /tests/
 /blockbench/tests/
+/logs/
+/yes_steve_model/

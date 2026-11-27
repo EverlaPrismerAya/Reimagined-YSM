@@ -57,10 +57,12 @@ public class YSMByteBuf implements AutoCloseable {
         int position = 0;
         while (true) {
             byte currentByte = buf.readByte();
+            if (position == 28 && (currentByte & 0xF0) != 0)
+                throw new IllegalArgumentException("VarInt exceeds 32 bits");
             value |= (currentByte & 0x7F) << position;
             if ((currentByte & 0x80) == 0) break;
             position += 7;
-            if (position >= 64) throw new RuntimeException("VarInt too big");
+            if (position >= 35) throw new IllegalArgumentException("VarInt exceeds 5 bytes");
         }
         return value;
     }
@@ -97,6 +99,7 @@ public class YSMByteBuf implements AutoCloseable {
     public byte[] readByteArray() {
         int len = readVarInt();
         if (len == 0) return new byte[0];
+        checkLength(len);
         byte[] bytes = new byte[len];
         buf.readBytes(bytes);
         return bytes;
@@ -105,9 +108,16 @@ public class YSMByteBuf implements AutoCloseable {
     public String readString() {
         int len = readVarInt();
         if (len == 0) return "";
+        checkLength(len);
         byte[] bytes = new byte[len];
         buf.readBytes(bytes);
         return new String(bytes, StandardCharsets.UTF_8);
+    }
+
+    private void checkLength(int length) {
+        if (length < 0 || length > buf.readableBytes())
+            throw new IllegalArgumentException("Invalid YSM length " + length + " at byte " + buf.readerIndex()
+                    + "; remaining " + buf.readableBytes());
     }
 
     public byte[] toArray() {

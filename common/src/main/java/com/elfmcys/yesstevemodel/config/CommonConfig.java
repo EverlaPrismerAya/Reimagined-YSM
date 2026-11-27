@@ -6,6 +6,7 @@ import net.minecraftforge.common.ForgeConfigSpec;
 import java.util.List;
 
 public class CommonConfig {
+    public static ForgeConfigSpec.BooleanValue RYSM_JS_SYNC_ENABLED;
     public static ForgeConfigSpec.EnumValue<ModelLoadingMode> MODEL_LOADING_MODE;
 
     public static ForgeConfigSpec.IntValue THREAD_COUNT;
@@ -33,6 +34,8 @@ public class CommonConfig {
     }
 
     private static void defineOptions(ForgeConfigSpec.Builder builder) {
+        builder.comment("Relay explicitly synchronized rysmjs Molang outputs between capable clients.");
+        RYSM_JS_SYNC_ENABLED = builder.define("rysmJsSyncEnabled", true);
         builder.comment("The default model ID when a player first enters the game");
         DEFAULT_MODEL_ID = builder.define("DefaultModelId", "default");
         builder.comment("The default model texture when a player first enters the game");

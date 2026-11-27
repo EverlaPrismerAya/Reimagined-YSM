@@ -22,6 +22,7 @@ public final class YsmEventBootstrap {
         CommonEvent.register();
         CommandRegistry.register();
         CapabilityEvent.register();
+        net.everla.ysmJsLib.ScriptSync.register();
         if (!PlatformAPI.isServer()) {
             EntityJoinCallbackEvent.register();
             ClientSetupEvent.register();

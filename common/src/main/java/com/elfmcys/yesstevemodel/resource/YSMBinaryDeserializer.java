@@ -28,12 +28,19 @@ public class YSMBinaryDeserializer implements AutoCloseable{
 
 
     private RawYsmModel deserializeInternal(boolean closeOnExit) {
-        if (format < 4) {
-            deserializeLegacyV1();
-        } else if (format <= 15) {
-            deserializeLegacyV15();
-        } else {
-            deserializeModern();
+        try {
+            if (format < 4) {
+                deserializeLegacyV1();
+            } else if (format <= 18) {
+                deserializeLegacyV15();
+            } else {
+                deserializeModern();
+            }
+        } catch (RuntimeException failure) {
+            int offset = reader.getOffset();
+            if (closeOnExit) reader.close();
+            throw new IllegalArgumentException("Cannot parse YSM binary format " + format + " at byte " + offset
+                    + "; damaged or unsupported model: " + failure.getMessage(), failure);
         }
 
         // 老版本格式可能有动画没模型没纹理
@@ -77,9 +84,10 @@ public class YSMBinaryDeserializer implements AutoCloseable{
                 model.footer.unkInt2 = reader.readVarInt(); // always 0，暂时没看到过其他的情况，似乎是字符串
             }
 
-        } catch (Throwable t) {
-            System.out.println("ERROR");
-            t.printStackTrace(System.out);
+        } catch (RuntimeException failure) {
+            model.footer = new RawYsmModel.RawFooter();
+            org.slf4j.LoggerFactory.getLogger("yes_steve_model").warn("Ignored invalid optional YSM footer (format {}, byte {}): {}",
+                    format, reader.getOffset(), failure.getMessage());
         }
     }
 
@@ -262,6 +270,14 @@ public class YSMBinaryDeserializer implements AutoCloseable{
             }
         }
 
+        if (format > 15) {
+            // Legacy 16–18 extensions precede avatars. Only the empty variant is decoded;
+            // reject non-empty unknown sections instead of guessing offsets into the next table.
+            for (int section = 0; section < 4; section++) {
+                if (reader.readVarInt() != 0)
+                    throw new UnsupportedOperationException("Non-empty legacy extension section " + section + " in format " + format);
+            }
+        }
         List<RawYsmModel.RawImage> tempAvatars = new ArrayList<>();
         int extraTextureCount = reader.readVarInt();
         for (int i = 0; i < extraTextureCount; ++i) {
@@ -348,7 +364,7 @@ public class YSMBinaryDeserializer implements AutoCloseable{
             for (int i = 0; i < subEntityTotalCount; ++i) {
                 parseSubEntity(model.vehicles, i);
             }
-            int footerFlag = reader.readVarInt(); // always 00
+            if (format >= 21) reader.readVarInt(); // Reserved field added in format 21.
         } else {
             int vehiclesTotalCount = reader.readVarInt();
             for (int i = 0; i < vehiclesTotalCount; ++i) parseSubEntity(model.vehicles, i);
@@ -411,7 +427,7 @@ public class YSMBinaryDeserializer implements AutoCloseable{
             rawAnimationFile.fileHash = hash;
         }
 
-        parseAnimationControllers(subEntity.animationControllerFiles, false);
+        if (format > 21) parseAnimationControllers(subEntity.animationControllerFiles, false);
 
         RawYsmModel.RawTexture baseTex = new RawYsmModel.RawTexture();
         SpecialImageResult imgRes = parseSpecialImage();
@@ -419,8 +435,8 @@ public class YSMBinaryDeserializer implements AutoCloseable{
         baseTex.data = imgRes.data;
         baseTex.width = reader.readVarInt();
         baseTex.height = reader.readVarInt();
-        baseTex.imageFormat = reader.readVarInt();
-        baseTex.unknownFlag = reader.readVarInt();
+        baseTex.imageFormat = format <= 21 ? -1 : reader.readVarInt();
+        if (format > 21) baseTex.unknownFlag = reader.readVarInt();
         baseTex.name = "base_texture_" + index;
         subEntity.textures.put(baseTex.name, baseTex);
 
@@ -434,8 +450,8 @@ public class YSMBinaryDeserializer implements AutoCloseable{
             subTex.data = specRes.data;
             subTex.width = reader.readVarInt();
             subTex.height = reader.readVarInt();
-            subTex.imageFormat = reader.readVarInt();
-            subTex.unknownFlag = reader.readVarInt();
+            subTex.imageFormat = format <= 21 ? -1 : reader.readVarInt();
+            if (format > 21) subTex.unknownFlag = reader.readVarInt();
             baseTex.subTextures.add(subTex);
         }
 
@@ -446,6 +462,8 @@ public class YSMBinaryDeserializer implements AutoCloseable{
 
         if (format > 26) {
             int matchIdSize = reader.readVarInt();
+            if (matchIdSize < 0 || matchIdSize > reader.getRawBuf().readableBytes())
+                throw new IllegalArgumentException("Invalid subentity match ID count: " + matchIdSize);
             subEntity.matchIds = new String[matchIdSize];
             for (int j = 0; j < matchIdSize; j++) {
                 subEntity.matchIds[j] = reader.readString();
@@ -505,6 +523,8 @@ public class YSMBinaryDeserializer implements AutoCloseable{
         geo.visibleBoundsWidth = reader.readFloat();
 
         int visibleBoundsOffsetSize = reader.readVarInt();
+        if (visibleBoundsOffsetSize < 0 || visibleBoundsOffsetSize > reader.getRawBuf().readableBytes() / Float.BYTES)
+            throw new IllegalArgumentException("Invalid visible bounds vector length: " + visibleBoundsOffsetSize);
         geo.visibleBoundsOffset = new float[visibleBoundsOffsetSize];
         for (int i = 0; i < visibleBoundsOffsetSize; i++) {
             geo.visibleBoundsOffset[i] = reader.readFloat();
@@ -530,7 +550,7 @@ public class YSMBinaryDeserializer implements AutoCloseable{
         int isNewVersionYsm = reader.readVarInt();
 
         if (isNewVersionYsm != 0) {
-            if (format <= 15) {
+            if (format <= 18) {
                 reader.readVarInt(); // unknown
             }
 
@@ -558,7 +578,7 @@ public class YSMBinaryDeserializer implements AutoCloseable{
             }
         }
 
-        if (isNewVersionYsm == 0 && format <= 15) return;
+        if (isNewVersionYsm == 0 && format <= 18) return;
 
         model.properties.widthScale = reader.readFloat();
         model.properties.heightScale = reader.readFloat();
@@ -624,8 +644,8 @@ public class YSMBinaryDeserializer implements AutoCloseable{
             model.properties.disablePreviewRotation = reader.readVarInt() != 0;
         }
 
-        if (format > 15) {
-            model.properties.guiNoLighting = reader.readVarInt() != 0;
+        if (format > 15) model.properties.guiNoLighting = reader.readVarInt() != 0;
+        if (format > 18) {
             if (format >= 32) {
                 model.properties.mergeMultilineExpr = reader.readVarInt() != 0;
             }
@@ -640,8 +660,8 @@ public class YSMBinaryDeserializer implements AutoCloseable{
                 avatar.data = reader.readByteArray();
                 avatar.width = reader.readVarInt();
                 avatar.height = reader.readVarInt();
-                avatar.format = reader.readVarInt();
-                avatar.unknownFlag = reader.readVarInt();
+                avatar.format = format <= 21 ? -1 : reader.readVarInt();
+                if (format > 21) avatar.unknownFlag = reader.readVarInt();
                 if (i < model.metadata.authors.size()) {
                     model.metadata.authors.get(i).avatar = avatar.name;
                     model.metadata.authors.get(i).avatarImage = avatar;
@@ -651,7 +671,7 @@ public class YSMBinaryDeserializer implements AutoCloseable{
             }
         }
 
-        if (format <= 15) return;
+        if (format <= 18) return;
 
         int backgroundImagesCount = reader.readVarInt();
         for (int i = 0; i < backgroundImagesCount; i++) {
@@ -660,8 +680,8 @@ public class YSMBinaryDeserializer implements AutoCloseable{
             bg.data = reader.readByteArray();
             bg.width = reader.readVarInt();
             bg.height = reader.readVarInt();
-            bg.format = reader.readVarInt();
-            bg.unknownFlag = reader.readVarInt();
+            bg.format = format <= 21 ? -1 : reader.readVarInt();
+            if (format > 21) bg.unknownFlag = reader.readVarInt();
             model.properties.backgroundImages.add(bg);
         }
     }
@@ -795,7 +815,7 @@ public class YSMBinaryDeserializer implements AutoCloseable{
         for (int i = 0; i < controllerCount; i++) {
             RawYsmModel.RawAnimationControllerFile file = new RawYsmModel.RawAnimationControllerFile();
 
-            if (format <= 15) {
+            if (format <= 18) {
                 file.legacyUnknownInt = reader.readVarInt();
                 file.name = "legacy_controller_" + i;
             } else {
@@ -868,7 +888,7 @@ public class YSMBinaryDeserializer implements AutoCloseable{
         for (int i = 0; i < soundCount; i++) {
             String soundName = reader.readString();
             String hash = "";
-            if (format > 15) {
+            if (format > 18) {
                 hash = reader.readString(); // soundHash
             }
             byte[] data = reader.readByteArray();
@@ -909,8 +929,8 @@ public class YSMBinaryDeserializer implements AutoCloseable{
             tex.data = reader.readByteArray();
             tex.width = reader.readVarInt();
             tex.height = reader.readVarInt();
-            tex.imageFormat = reader.readVarInt();
-            tex.unknownFlag = reader.readVarInt();
+            tex.imageFormat = format <= 21 ? -1 : reader.readVarInt();
+            if (format > 21) tex.unknownFlag = reader.readVarInt();
 
             int subTextureSize = reader.readVarInt();
             for (int j = 0; j < subTextureSize; j++) {
@@ -921,8 +941,8 @@ public class YSMBinaryDeserializer implements AutoCloseable{
                 subTex.data = specRes.data;
                 subTex.width = reader.readVarInt();
                 subTex.height = reader.readVarInt();
-                subTex.imageFormat = reader.readVarInt();
-                subTex.unknownFlag = reader.readVarInt();
+                subTex.imageFormat = format <= 21 ? -1 : reader.readVarInt();
+                if (format > 21) subTex.unknownFlag = reader.readVarInt();
                 tex.subTextures.add(subTex);
             }
             targetMap.put(tex.name, tex);

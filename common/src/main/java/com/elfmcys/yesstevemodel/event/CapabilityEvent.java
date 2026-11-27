@@ -96,7 +96,7 @@ public final class CapabilityEvent {
     }
 
     private static void onServerTick(MinecraftServer server) {
-        if (YesSteveModel.isAvailable()) ServerModelManager.syncLoadingMode(server);
+        if (YesSteveModel.isAvailable()) { ServerModelManager.syncLoadingMode(server);net.everla.ysmJsLib.ScriptSync.tick(server); }
         if (!YesSteveModel.isAvailable()) {
             return;
         }

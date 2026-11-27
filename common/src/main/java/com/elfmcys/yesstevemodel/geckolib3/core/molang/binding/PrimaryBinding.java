@@ -32,6 +32,7 @@ public class PrimaryBinding implements ObjectBinding {
         if (map != null) {
             this.bindings.putAll(map);
         }
+        this.bindings.put("rysmjs",new net.everla.ysmJsLib.ScriptBinding());
         this.bindings.put("math", MathBinding.INSTANCE);
         this.bindings.put("query", QueryBinding.INSTANCE);
         this.bindings.put("q", QueryBinding.INSTANCE);

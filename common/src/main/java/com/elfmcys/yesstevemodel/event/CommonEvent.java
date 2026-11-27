@@ -1,27 +1,13 @@
 package com.elfmcys.yesstevemodel.event;
 
 import com.elfmcys.yesstevemodel.YesSteveModel;
-import com.elfmcys.yesstevemodel.client.ClientModelManager;
-import net.everla.reimaginedysm.api.PlatformAPI;
 import net.everla.reimaginedysm.compat.touhoulittlemaid.TouhouMaidCompat;
-import com.elfmcys.yesstevemodel.model.ServerModelManager;
 import com.elfmcys.yesstevemodel.network.NetworkHandler;
 import dev.architectury.event.events.common.LifecycleEvent;
-
-import java.io.IOException;
 
 public final class CommonEvent {
 
     private CommonEvent() {
-    }
-
-    public static Object nativeInit() {
-        try {
-            ServerModelManager.reloadPacks();
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-        return null;
     }
 
     public static void register() {
@@ -32,7 +18,6 @@ public final class CommonEvent {
             }
             NetworkHandler.init();
             TouhouMaidCompat.init();
-            nativeInit();
         });
     }
 }

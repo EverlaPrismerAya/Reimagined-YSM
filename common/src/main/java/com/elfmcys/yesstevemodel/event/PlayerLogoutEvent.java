@@ -14,6 +14,8 @@ public final class PlayerLogoutEvent {
         PlayerEvent.PLAYER_QUIT.register(player -> {
             net.everla.reimaginedysm.server.ModelUploadReceiver.cancel(player.getUUID());
             NetworkHandler.clearClientModelSyncFragments(player.getUUID());
+            net.everla.ysmJsLib.ScriptSync.forget(player.getUUID());
+            net.everla.ysmJsLib.ScriptTransfer.capability(player.getUUID(),null,false);
             if (!YesSteveModel.isAvailable()) {
                 return;
             }

@@ -3,6 +3,8 @@ package com.elfmcys.yesstevemodel.resource.pojo;
 import java.util.*;
 
 public class RawYsmModel {
+    public transient net.everla.ysmJsLib.ScriptBundle rysmBundle;
+    public transient boolean rysmSourceChecked;
     public String modelId;
     public int formatVersion;
     public RawMetadata metadata = new RawMetadata();

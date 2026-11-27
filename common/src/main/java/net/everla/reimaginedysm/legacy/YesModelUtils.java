@@ -40,6 +40,8 @@ public final class YesModelUtils {
         }
 
         if (fileData[0] == 0x59 && fileData[1] == 0x53 && fileData[2] == 0x47 && fileData[3] == 0x50) {
+            // New exports may omit the optional UTF-8 BOM before their textual header.
+            if (fileData[4] == '\r' || fileData[4] == '\n') return 3;
             int cryptoVersion = ByteBuffer.wrap(fileData, 4, 4).order(ByteOrder.BIG_ENDIAN).getInt();
 
             if (cryptoVersion == 2) {
@@ -53,7 +55,7 @@ public final class YesModelUtils {
     }
 
     public static Map<String, byte[]> input(byte[] data) throws IOException {
-        if (data.length < 24) return Collections.emptyMap();
+        if (data.length < 24) throw new IOException("Invalid legacy YSM file: header is truncated");
         int head = ByteInteger.bytes2Int(data, 0);
         int version = ByteInteger.bytes2Int(data, 4);
         return inputInternal(data, head, version);
@@ -65,23 +67,21 @@ public final class YesModelUtils {
             return Collections.emptyMap();
         }
         byte[] data = FileUtils.readFileToByteArray(ysmFile);
-        int head = ByteInteger.bytes2Int(data, 0);
-        int version = ByteInteger.bytes2Int(data, 4);
-        return inputInternal(data, head, version);
+        return input(data);
     }
 
     private static Map<String, byte[]> inputInternal(byte[] data, int head, int version) throws IOException {
         if (head != HEAD) {
-            return Collections.emptyMap();
+            throw new IOException("Invalid legacy YSM signature");
         }
         if (version != VERSION && version != VERSION_II) {
-            return Collections.emptyMap();
+            throw new IOException("Unsupported legacy YSM crypto version: " + version);
         }
 
         byte[] md5 = ByteArrays.copy(data, 8, 16);
         byte[] modelFilesData = ByteArrays.copy(data, 24, data.length - 24);
         if (!Arrays.equals(md5, DigestUtil.md5(modelFilesData))) {
-            return Collections.emptyMap();
+            throw new IOException("Corrupted legacy YSM file: MD5 mismatch; obtain an intact copy of the model");
         }
 
         Map<String, byte[]> outputs = Maps.newHashMap();
@@ -96,7 +96,7 @@ public final class YesModelUtils {
                 }
                 outputs.put(ysmFileData.left(), ysmFileData.right());
             } catch (GeneralSecurityException | DataFormatException | IOException e) {
-                e.printStackTrace();
+                throw new IOException("Cannot decode legacy YSM entry; the model is damaged or unsupported", e);
             }
         }
         return outputs;

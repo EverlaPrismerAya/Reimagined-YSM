@@ -27,7 +27,7 @@ public record FrameAnimation(double tick, int count, String macro, boolean macro
         double tick = macro == null ? Double.parseDouble(parameters.get("tick")) : 0;
         if (macro == null && (!Double.isFinite(tick) || tick <= 0))
             throw new IllegalArgumentException("tick must be finite and positive (Minecraft ticks)");
-        if (macro != null && !macro.matches("(?:v|variable)\\.[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*"))
+        if (macro != null && !macro.matches("(?:v|variable|rysmjs)\\.[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*"))
             throw new IllegalArgumentException("macro must be a v.* or variable.* variable path");
         String repeat = parameters.getOrDefault("macroRepeat", "true");
         if (!repeat.equals("true") && !repeat.equals("false"))

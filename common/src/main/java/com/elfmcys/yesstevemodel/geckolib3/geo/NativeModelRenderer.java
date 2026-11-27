@@ -322,7 +322,7 @@ public class NativeModelRenderer {
                 (bone.pivotY + animTy) * 0.0625f,
                 (bone.pivotZ + animTz) * 0.0625f
         );
-        if (bone.name.startsWith("FacingCamera")) {
+        if ((bone.facingCamera || bone.name.startsWith("FacingCamera"))) {
             FacingCameraTransform.apply(localMat, modelToCamera);
         } else {
             localMat.rotateZ(animRz);

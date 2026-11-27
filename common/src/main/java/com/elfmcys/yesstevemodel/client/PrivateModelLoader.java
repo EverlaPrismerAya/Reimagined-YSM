@@ -30,7 +30,7 @@ final class PrivateModelLoader {
         for (Path file : sources) {
             try {
                 if (file.toString().toLowerCase(Locale.ROOT).endsWith(".zip")) {
-                    try (FileSystem zip = FileSystems.newFileSystem(file)) {
+                    try (FileSystem zip = com.elfmcys.yesstevemodel.util.ModelArchives.openZip(file)) {
                         scan(zip.getPath("/"), prefix + root.relativize(file).toString().replace('\\', '/') + "/", consumer);
                     }
                     continue;
@@ -53,12 +53,15 @@ final class PrivateModelLoader {
                         }
                     }
                 }
+                if(!directory)net.everla.ysmJsLib.ScriptResources.companion(raw,file);
+                net.everla.ysmJsLib.ScriptResources.prepare(raw);
                 try (YSMByteBuf serialized = YSMBinarySerializer.serialize(raw, 32, true)) {
                     SharedModelCache.store(raw.properties.sha256, new YsmCrypt.CachePayload(serialized.toArray(), 32));
                 }
                 consumer.accept(id, raw);
             } catch (Exception e) {
-                YesSteveModel.LOGGER.error("Failed to load client-only model: " + file, e);
+                YesSteveModel.LOGGER.warn("Skipped client-only model {}: {}", file, e.getMessage());
+                YesSteveModel.LOGGER.debug("Client-only model failure: " + file, e);
             }
         }
     }

@@ -2,8 +2,8 @@
 
 #define M_PI 3.1415926535897932384626433832795
 
-const int cosmiccount = 10;
-const int cosmicoutof = 101;
+uniform int cosmiccount;
+uniform float cosmicoutof;
 
 uniform sampler2D texture0;
 uniform sampler2DArray stars;

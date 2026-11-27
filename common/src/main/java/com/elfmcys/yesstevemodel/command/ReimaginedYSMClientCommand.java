@@ -14,6 +14,11 @@ public class ReimaginedYSMClientCommand {
                 .requires(source -> true);
 
         root.then(CacheCommand.register());
+        root.then(LiteralArgumentBuilder.<ClientCommandRegistrationEvent.ClientCommandSourceStack>literal("keys").executes(context -> {
+            var mc=net.minecraft.client.Minecraft.getInstance();
+            for(var key:mc.options.keyMappings)mc.gui.getChat().addMessage(net.minecraft.network.chat.Component.literal(key.getName()+" = "+key.getTranslatedKeyMessage().getString()));
+            return 1;
+        }));
 
         commandDispatcher.register(root);
     }

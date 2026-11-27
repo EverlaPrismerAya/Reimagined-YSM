@@ -314,6 +314,7 @@ public class YsmCrypt {
         }
 
         int ptrBinaryData = headerLength + 1;
+        if (ptrBinaryData > tailOffset - 4) throw new IllegalArgumentException("Invalid YSM file: missing binary payload header");
         int crypto = ByteBuffer.wrap(fileData, ptrBinaryData, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
         if (crypto != 3) {
             throw new RuntimeException("Invalid YSM file: Crypto version is not 3.");
@@ -329,9 +330,11 @@ public class YsmCrypt {
         byte[] xorredData = chachaDecrypted;
 
         //uint16_t n = xorred_data[0] | (xorred_data[1] << 8); n &= 0x3ff;
+        if (xorredData.length < 2) throw new IllegalArgumentException("Invalid YSM file: truncated resource payload");
         int n = ((xorredData[0] & 0xFF) | ((xorredData[1] & 0xFF) << 8)) & 0x3FF;
 
         int zstdOffset = 2 + n;
+        if (zstdOffset >= xorredData.length) throw new IllegalArgumentException("Invalid YSM file: resource offset exceeds payload");
         return YsmZstd.decompress(xorredData, zstdOffset, xorredData.length - zstdOffset);
     }
 

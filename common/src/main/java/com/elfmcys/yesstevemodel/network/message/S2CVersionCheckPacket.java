@@ -39,6 +39,8 @@ public class S2CVersionCheckPacket {
                 if (buf.isReadable()) { ClientModelManager.setReimaginedYsmServer(true); ClientModelManager.setAllowUpload(buf.readBoolean()); }
             }
         }
+        net.everla.ysmJsLib.ScriptTransfer.serverSupportsScripts=NetworkHandler.VERSION.equals(version) && buf.isReadable() && buf.readBoolean();
+        net.everla.ysmJsLib.ScriptSync.supported=net.everla.ysmJsLib.ScriptTransfer.serverSupportsScripts && buf.isReadable() && buf.readBoolean();
         return new S2CVersionCheckPacket(version, supportsModelSyncFragments);
     }
 
@@ -46,6 +48,8 @@ public class S2CVersionCheckPacket {
         buf.writeUtf(message.version);
         if (message.supportsModelSyncFragments) {
             buf.writeUtf(MODEL_SYNC_FRAGMENT_BRAND);
+            buf.writeBoolean(true);
+            buf.writeBoolean(true);
             buf.writeBoolean(true);
         }
     }

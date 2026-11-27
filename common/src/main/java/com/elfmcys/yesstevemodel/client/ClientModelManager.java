@@ -682,6 +682,7 @@ public class ClientModelManager {
                 Path shared = SharedModelCache.store(info.getModelHash(), cachePayload);
                 lazyModelSources.put(modelId, new LazyModelSource(shared, SharedModelCache.key(), info, isAuth, false));
             }
+            net.everla.ysmJsLib.ScriptTransfer.ensure(rawModel.properties.sha256);
             // 组装到客户端模型
             ClientModelInfo parsedBundle = YSMClientMapper.buildParsedBundle(rawModel, modelId);
             if (generation == modelLoadGeneration.get()) {

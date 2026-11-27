@@ -217,12 +217,12 @@ public final class GroupEffectRenderer {
                     int program=bone.style.cosmic()?skinCosmic:skinSurface;
                     bind(program);uniform(program,"materialPass",0);uniform(program,"alphaMode",pass);
                     GL20.glUniform4f(location(program,"color"),r,g,b,alpha);
-                    if(bone.style.cosmic()) cosmicUniforms(program,bone.style,preview,light);
+                    if(bone.style.cosmic()) cosmicUniforms(program,bone.style,preview,light,model,bone.cosmicEffect);
                     else {surfaceUniforms(program,light,overlay);uniform(program,"mode",0);uniform(program,"glowing",bone.glow?1:0);}
                     GL11.glDrawArrays(GL11.GL_TRIANGLES,range.first(),range.count());
                 }
+                if(pass==1) drawGpuOutlines(model,mesh.groups,part,textureIndex,light,overlay,alpha);
             }
-            drawGpuOutlines(model,mesh.groups,part,textureIndex,light,overlay,alpha);
         }
         return true;
     }
@@ -236,18 +236,28 @@ public final class GroupEffectRenderer {
     private static void drawGpuOutlines(GeoModel model,GroupGpuMesh mesh,int part,int textureIndex,int light,int overlay,float alpha) {
         bind(skinSurface);uniform(skinSurface,"materialPass",0);uniform(skinSurface,"mode",1);uniform(skinSurface,"alphaMode",0);
         surfaceUniforms(skinSurface,light,overlay);GL20.glUniform4f(location(skinSurface,"color"),1,1,1,alpha);
-        RenderSystem.enableBlend();RenderSystem.defaultBlendFunc();RenderSystem.depthMask(false);
+        RenderSystem.enableBlend();RenderSystem.defaultBlendFunc();
         int[] viewport=new int[4];GL11.glGetIntegerv(GL11.GL_VIEWPORT,viewport);
-        for(var range:mesh.ranges) {
-            var bone=model.bakedBones.get(range.bone());
-            if((part!=0 && bone.partMask!=part && bone.partMask!=3) || !bone.style.outline() || bone.style.outlineWidth()==0) continue;
-            rgb(skinSurface,"tint",outlineColor(model,range.bone(),textureIndex),1);uniform(skinSurface,"glowing",bone.glow?1:0);
-            float width=bone.style.outlineWidth();int steps=(int)Math.ceil(width);
-            for(int dy=-steps;dy<=steps;dy++) for(int dx=-steps;dx<=steps;dx++) if(dx!=0 || dy!=0) {
-                matrix(skinSurface,new Matrix4f().translation(dx*width/steps*2f/viewport[2],dy*width/steps*2f/viewport[3],.00001f).mul(RenderSystem.getProjectionMatrix()));
-                GL11.glDrawArrays(GL11.GL_TRIANGLES,range.first(),range.count());
+        for(int pass=1;pass<=2;pass++) {
+            if(pass==2 && !model.isTranslucentTexture(textureIndex)) continue;
+            outlineDepth(pass==1);uniform(skinSurface,"alphaMode",pass);
+            for(var range:mesh.ranges) {
+                var bone=model.bakedBones.get(range.bone());
+                if((part!=0 && bone.partMask!=part && bone.partMask!=3) || !bone.style.outline() || bone.style.outlineWidth()==0) continue;
+                rgb(skinSurface,"tint",outlineColor(model,range.bone(),textureIndex),1);uniform(skinSurface,"glowing",bone.glow?1:0);
+                float width=bone.style.outlineWidth();int steps=(int)Math.ceil(width);
+                for(int dy=-steps;dy<=steps;dy++) for(int dx=-steps;dx<=steps;dx++) if(dx!=0 || dy!=0) {
+                    matrix(skinSurface,new Matrix4f().translation(dx*width/steps*2f/viewport[2],dy*width/steps*2f/viewport[3],.00001f).mul(RenderSystem.getProjectionMatrix()));
+                    GL11.glDrawArrays(GL11.GL_TRIANGLES,range.first(),range.count());
+                }
             }
         }
+    }
+
+    // Opaque silhouette copies must occlude later copies and deferred geometry.
+    // Transparent copies keep blending without claiming opaque depth coverage.
+    static void outlineDepth(boolean write) {
+        RenderSystem.enableDepthTest();RenderSystem.depthFunc(GL11.GL_LEQUAL);RenderSystem.depthMask(write);
     }
 
     private static int outlineColor(GeoModel model,int index,int textureIndex) {
@@ -277,7 +287,7 @@ public final class GroupEffectRenderer {
             bind(program);uniform(program,"materialPass",1);uniform(program,"atlasColumns",columns);
             uniform(program,"atlasTriangles",triangles);uniform(program,"atlasBand",band);uniform(program,"atlasTileSize",tile);
             uniform(program,"alphaMode",band==2?0:band+1);GL20.glUniform4f(location(program,"color"),1,1,1,1);
-            if(program==skinCosmic) {cosmicUniforms(program,bone.style,preview,light);scalar(program,"lightmix",0);}
+            if(program==skinCosmic) {cosmicUniforms(program,bone.style,preview,light,model,bone.cosmicEffect);scalar(program,"lightmix",0);}
             else uniform(program,"maskOnly",band==2?1:0);
             GL11.glDrawArrays(GL11.GL_TRIANGLES,range.first(),range.count());
         }
@@ -304,7 +314,7 @@ public final class GroupEffectRenderer {
                             .mul(RenderSystem.getProjectionMatrix());
                     GlStateManager._glUseProgram(entityCompute);uniform(entityCompute,"outlineFirst",range.first());uniform(entityCompute,"outlineCount",range.count());
                     GL20.glUniformMatrix4fv(location(entityCompute,"outlineTransform"),false,shifted.get(new float[16]));dispatchGroupEntity(mesh.vertices);
-                    gpuEntityRange(instance,mesh.vertices,range,2,texture,false,false,((color>>16)&255)/255f,((color>>8)&255)/255f,(color&255)/255f,alpha);
+                    gpuEntityRange(instance,mesh.vertices,range,2,texture,false,true,((color>>16)&255)/255f,((color>>8)&255)/255f,(color&255)/255f,alpha);
                 }
             }
         }
@@ -334,7 +344,8 @@ public final class GroupEffectRenderer {
         try {
             type.setupRenderState();RenderSystem.setShaderTexture(0,atlas);
             shader=Objects.requireNonNull(RenderSystem.getShader());net.everla.reimaginedysm.gpu.IrisRenderPath.setupShader(shader,entityIdentity);shader.apply();
-            RenderSystem.depthMask(depthWrite);RenderSystem.colorMask(!depthOnly,!depthOnly,!depthOnly,!depthOnly);
+            if(band==2) outlineDepth(depthWrite);else RenderSystem.depthMask(depthWrite);
+            RenderSystem.colorMask(!depthOnly,!depthOnly,!depthOnly,!depthOnly);
             GL30.glBindVertexArray(instance.groupVao());GL20.glDisableVertexAttribArray(1);GL20.glVertexAttrib4f(1,r,g,b,a);
             if(range!=null) GL11.glDrawArrays(GL11.GL_TRIANGLES,band*count+range.first(),range.count());
             else for(var run:mesh.ranges) {
@@ -398,7 +409,7 @@ public final class GroupEffectRenderer {
             uniform(p,"atlasTriangles",triangles);uniform(p,"atlasBand",band);uniform(p,"atlasTileSize",tile);
             uniform(p,"alphaMode",band==2?0:band+1);
             if(p==materialCosmic) {
-                cosmicUniforms(p,style,preview,light);
+                cosmicUniforms(p,style,preview,light,model,model.bakedBones.get(batch.bone).cosmicEffect);
                 // This texture is albedo, not a second lit/fogged framebuffer.
                 scalar(p,"lightmix",0);
             } else uniform(p,"maskOnly",band==2?1:0);
@@ -432,7 +443,7 @@ public final class GroupEffectRenderer {
                     Matrix4f shifted=new Matrix4f().translation(dx*bone.style.outlineWidth()/steps*2f/viewport[2],
                             dy*bone.style.outlineWidth()/steps*2f/viewport[3],.00001f).mul(RenderSystem.getProjectionMatrix());
                     shiftOutlineVertices(model,batch,count,columns,light,overlay,shifted);
-                    entityPass(model,List.of(batch),count,2,texture,false,false,
+                    entityPass(model,List.of(batch),count,2,texture,false,true,
                             ((color>>16)&255)/255f,((color>>8)&255)/255f,(color&255)/255f,alpha);
                 }
             }
@@ -511,7 +522,8 @@ public final class GroupEffectRenderer {
             shader=Objects.requireNonNull(RenderSystem.getShader(),"Missing group entity shader");
             net.everla.reimaginedysm.gpu.IrisRenderPath.setupShader(shader,entityIdentity);
             shader.apply();
-            RenderSystem.depthMask(depthWrite);RenderSystem.colorMask(!depthOnly,!depthOnly,!depthOnly,!depthOnly);
+            if(band==2) outlineDepth(depthWrite);else RenderSystem.depthMask(depthWrite);
+            RenderSystem.colorMask(!depthOnly,!depthOnly,!depthOnly,!depthOnly);
             GL30.glBindVertexArray(entityVao);GL20.glVertexAttrib4f(1,r,g,b,a);
             for(var batch:batches) GL11.glDrawArrays(GL11.GL_TRIANGLES,band*count+batch.first,batch.triangles.size());
         } finally {
@@ -574,21 +586,25 @@ public final class GroupEffectRenderer {
             uniform(surface,"mode",1);
             uniform(surface,"alphaMode",0);
             int[] viewport=new int[4];GL11.glGetIntegerv(GL11.GL_VIEWPORT,viewport);
-            for(var batch:batches) {
-                var bone=model.bakedBones.get(batch.bone);if(!bone.style.outline()) continue;
-                float width=bone.style.outlineWidth();
-                if(width==0) continue;
-                int color=bone.style.outlineColor();
-                if(color<0) {
-                    int[] colors=model.bakedBones.get(bone.outlineGroup).averageColors;
-                    color=colors==null?0x181818:colors[Math.min(textureIndex,colors.length-1)];
-                }
-                rgb(surface,"tint",color,1);
-                int steps=(int)Math.ceil(width);
-                for(int dy=-steps;dy<=steps;dy++) for(int dx=-steps;dx<=steps;dx++) if(dx!=0 || dy!=0) {
-                    Matrix4f shifted=new Matrix4f().translation(dx*width/steps*2f/viewport[2],dy*width/steps*2f/viewport[3],.00001f)
-                            .mul(RenderSystem.getProjectionMatrix());
-                    matrix(surface,shifted);emit(batch,1,1,1,alpha,light,model);
+            for(int outlinePass=1;outlinePass<=2;outlinePass++) {
+                if(outlinePass==2 && !model.isTranslucentTexture(textureIndex)) continue;
+                outlineDepth(outlinePass==1);uniform(surface,"alphaMode",outlinePass);
+                for(var batch:batches) {
+                    var bone=model.bakedBones.get(batch.bone);if(!bone.style.outline()) continue;
+                    float width=bone.style.outlineWidth();
+                    if(width==0) continue;
+                    int color=bone.style.outlineColor();
+                    if(color<0) {
+                        int[] colors=model.bakedBones.get(bone.outlineGroup).averageColors;
+                        color=colors==null?0x181818:colors[Math.min(textureIndex,colors.length-1)];
+                    }
+                    rgb(surface,"tint",color,1);
+                    int steps=(int)Math.ceil(width);
+                    for(int dy=-steps;dy<=steps;dy++) for(int dx=-steps;dx<=steps;dx++) if(dx!=0 || dy!=0) {
+                        Matrix4f shifted=new Matrix4f().translation(dx*width/steps*2f/viewport[2],dy*width/steps*2f/viewport[3],.00001f)
+                                .mul(RenderSystem.getProjectionMatrix());
+                        matrix(surface,shifted);emit(batch,1,1,1,alpha,light,model);
+                    }
                 }
             }
             // Opaque first; translucent exterior triangles back-to-front, without depth writes.
@@ -609,7 +625,7 @@ public final class GroupEffectRenderer {
                         if(program==surface) uniform(surface,"mode",0);
                     }
                     if(style.cosmic()) {
-                        if(previousProgram!=cosmic || !style.equals(previousStyle)) cosmicUniforms(style,preview,light);
+                        cosmicUniforms(cosmic,style,preview,light,model,model.bakedBones.get(batch.bone).cosmicEffect);
                     }
                     emit(batch,r,g,b,alpha,light,model);
                     previousProgram=program;previousStyle=style;
@@ -662,13 +678,13 @@ public final class GroupEffectRenderer {
         GL20.glUniform4f(location(p,name),color<0?-1:((color>>16)&255)/255f,
                 color<0?-1:((color>>8)&255)/255f,color<0?-1:(color&255)/255f,a);
     }
-    private static void cosmicUniforms(GroupStyle style,boolean preview,int light) {
-        cosmicUniforms(cosmic,style,preview,light);
-    }
-    private static void cosmicUniforms(int program,GroupStyle style,boolean preview,int light) {
+    private static void cosmicUniforms(int program,GroupStyle style,boolean preview,int light,GeoModel model,String effect) {
         var mc=Minecraft.getInstance();
         int ticks=mc.level==null?(int)(net.minecraft.Util.getMillis()/50): (int)mc.level.getGameTime();
-        updateStars(ticks);
+        int count=net.everla.ysmJsLib.CosmicTextures.bind(model.scripts,effect,ticks);
+        if(count==0){updateStars(ticks);count=10;}
+        uniform(program,"cosmiccount",count);
+        scalar(program,"cosmicoutof",count*10.1f);
         uniform(program,"stars",3);uniform(program,"time",ticks);
         var camera=mc.gameRenderer.getMainCamera();
         scalar(program,"yaw",preview?0:(float)Math.toRadians(camera.getYRot()));
@@ -727,6 +743,7 @@ public final class GroupEffectRenderer {
         if(atlasFbo!=0) GL30.glDeleteFramebuffers(atlasFbo);
         if(atlas!=0) GlStateManager._deleteTexture(atlas);
         if(stars!=0) GL11.glDeleteTextures(stars);
+        net.everla.ysmJsLib.CosmicTextures.clear();
         pixels.forEach(MemoryUtil::memFree);pixels.clear();frames.clear();
         surface=cosmic=material=materialCosmic=vbo=entityVbo=vao=entityVao=atlasFbo=atlas=atlasSize=stars=0;
         skinSurface=skinCosmic=skinMaterial=entityCompute=0;

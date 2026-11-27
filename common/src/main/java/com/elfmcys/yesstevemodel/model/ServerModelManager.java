@@ -115,6 +115,7 @@ public final class ServerModelManager {
     private static final SecureRandom theRandom = new SecureRandom();
     public static byte[] serverKey;
     private static volatile boolean initialized = false;
+    private static boolean modelDirectoriesPrepared = false;
     private static volatile String loadedSourceState;
     private static final Gson GSON = new Gson();
     private static final int CATALOG_VERSION = 2;
@@ -176,7 +177,7 @@ public final class ServerModelManager {
         String sha256;
     }
 
-    public static void reloadPacks() throws IOException {
+    private static void prepareModelDirectories() throws IOException {
         initialized = false;
         loadedSourceState = null;
         CACHE_NAME_INFO.clear();
@@ -304,7 +305,7 @@ public final class ServerModelManager {
         }
 
         serverKey = serverKeyBytes;
-        nativeLoadModels(null);
+        modelDirectoriesPrepared = true;
     }
 
     private static void extractBuiltinModels() {
@@ -524,10 +525,19 @@ public final class ServerModelManager {
     }
 
     public static synchronized boolean nativeLoadModels(Object callback) {
+        // Shared by local-server startup, client-only mode and explicit reloads.
+        if (!modelDirectoriesPrepared) {
+            try {
+                prepareModelDirectories();
+            } catch (IOException e) {
+                throw new IllegalStateException("Failed to prepare YSM model directories", e);
+            }
+        }
         catalogMetadata.clear();
         long begin = System.currentTimeMillis();
         ForkJoinPool pool = createLoadPool();
         try {
+            net.everla.ysmJsLib.ScriptUpgrade.process(FOLDER.resolve("rysm_upgrade"), CUSTOM);
             Map<String, ServerModelData> loadedModels = new ConcurrentHashMap<>();
             Set<String> authIds = ConcurrentHashMap.newKeySet();
             Set<String> validCacheFiles = ConcurrentHashMap.newKeySet();
@@ -591,6 +601,7 @@ public final class ServerModelManager {
         AtomicInteger index = new AtomicInteger();
         return new ForkJoinPool(parallelism, p -> {
             ForkJoinWorkerThread thread = ForkJoinPool.defaultForkJoinWorkerThreadFactory.newThread(p);
+            thread.setContextClassLoader(ServerModelManager.class.getClassLoader());
             thread.setName("ModelWorker#" + index.getAndIncrement());
             thread.setDaemon(true);
             thread.setPriority(Thread.NORM_PRIORITY);
@@ -629,8 +640,7 @@ public final class ServerModelManager {
         if (!prefix.isEmpty() && !prefix.endsWith("/")) prefix += "/";
 
         try {
-            URI uri = URI.create("jar:" + zipFile.toUri());
-            try (FileSystem fs = FileSystems.newFileSystem(uri, Collections.emptyMap())) {
+            try (FileSystem fs = com.elfmcys.yesstevemodel.util.ModelArchives.openZip(zipFile)) {
                 Path root = fs.getPath("/");
                 if (YSMFolderDeserializer.isModelFolder(root)) {
                     String modelId = prefix + zipBaseName;
@@ -654,7 +664,8 @@ public final class ServerModelManager {
                 }
             }
         } catch (Exception e) {
-            YesSteveModel.LOGGER.error("Failed to scan zip model source: " + zipFile, e);
+            YesSteveModel.LOGGER.warn("Skipped model ZIP {}: {}", zipFile, e.getMessage());
+            YesSteveModel.LOGGER.debug("Model ZIP failure: " + zipFile, e);
         }
     }
 
@@ -767,9 +778,11 @@ public final class ServerModelManager {
                 }
             }
 
+            net.everla.ysmJsLib.ScriptResources.companion(rawModel,file);
             registerParsedModel(key, modelId, rawModel, current, cacheDir, loaded, authIds, validCaches, nextCatalog, isAuth);
         } catch (Exception e) {
-            YesSteveModel.LOGGER.error("Failed to load binary model at: " + file, e);
+            YesSteveModel.LOGGER.warn("Skipped YSM model {}: {}", file, e.getMessage());
+            YesSteveModel.LOGGER.debug("Binary model failure: " + file, e);
         }
     }
 
@@ -810,7 +823,11 @@ public final class ServerModelManager {
         SourceSnapshot current = new SourceSnapshot();
         MessageDigest aggregate = newSha256();
         // Source bytes alone cannot validate geometry baked by an older parser.
-        aggregate.update(net.everla.ysmPhysLib.PhysParameters.GEOMETRY_CACHE_KEY.getBytes(StandardCharsets.UTF_8));
+        aggregate.update((net.everla.ysmPhysLib.PhysParameters.GEOMETRY_CACHE_KEY+"/rysmjs-v1").getBytes(StandardCharsets.UTF_8));
+        if(Files.isRegularFile(source) && source.toString().endsWith(".ysm")) {
+            String name=source.getFileName().toString();Path side=source.resolveSibling(name.substring(0,name.length()-4)+".rysm");
+            if(Files.isRegularFile(side))aggregate.update(Files.readAllBytes(side));
+        }
         aggregate.update((byte) 0);
         if (Files.isRegularFile(source)) {
             addSourceFile(source, "$", previous, current, aggregate);
@@ -935,6 +952,7 @@ public final class ServerModelManager {
 
     private static void registerParsedModel(String key, String modelId, @Nullable RawYsmModel raw, SourceSnapshot source, Path cacheDir, Map<String, ServerModelData> loaded, Set<String> authIds, Set<String> validCaches, Map<String, CachedModelMetadata> nextCatalog, boolean isAuth) {
         if (raw == null) return;
+        net.everla.ysmJsLib.ScriptResources.prepare(raw);
         ServerModelData data = processAndCacheModel(modelId, raw, cacheDir, isAuth, validCaches);
         if (data == null) return;
         loaded.put(modelId, data);
@@ -1235,6 +1253,15 @@ public final class ServerModelManager {
         }
     }
 
+    public static void requestScriptExtension(ServerPlayer player,String hash) {
+        var state=syncStates.get(player.getUUID());
+        if(state==null || state.step<2 || shouldHideModelsFrom(player.getUUID()))return;
+        if(!state.allowedModels.stream().anyMatch(m -> m.getLoadedModelData().getModelHash().equals(hash)))return;
+        com.elfmcys.yesstevemodel.util.YSMThreadPool.submit(()-> {
+            try{net.everla.ysmJsLib.ScriptTransfer.send(player,hash);}catch(Exception e){YesSteveModel.LOGGER.warn("Cannot send script extension {}",hash,e);}
+        });
+    }
+
     public static void requestThumbnails(ServerPlayer player, long page, List<String> models) {
         PlayerSyncState state = syncStates.get(player.getUUID());
         if (state == null || state.step < 2 || shouldHideModelsFrom(player.getUUID())) return;
@@ -1399,6 +1426,12 @@ public final class ServerModelManager {
                         continue;
                     }
 
+                    ServerPlayer scriptPlayer=Objects.requireNonNull(GameInstance.getServer()).getPlayerList().getPlayer(uuid);
+                    if(scriptPlayer!=null)for(var model:state.allowedModels) {
+                        String scriptHash=model.getLoadedModelData().getModelHash();
+                        long[] permitted=YsmCrypt.calculateModelHashes(scriptHash,serverKey);
+                        if(permitted[0]==hash1 && permitted[1]==hash2){net.everla.ysmJsLib.ScriptTransfer.send(scriptPlayer,scriptHash);break;}
+                    }
                     byte[] fileData = Files.readAllBytes(file);
                     int totalSize = fileData.length;
                     int maxChunkSize = 30720;
@@ -1502,7 +1535,7 @@ public final class ServerModelManager {
                     byte[] finalEncrypted = YsmCrypt.encryptYsmFile(rawBytes);
                     Path exportPath = EXPORT.resolve(modelID + ".ysm");
                     Files.createDirectories(exportPath.getParent());
-                    Files.write(exportPath, finalEncrypted);
+                    net.everla.ysmJsLib.ScriptExports.writePair(exportPath,finalEncrypted,net.everla.ysmJsLib.ScriptResources.get(sha256));
                     if (callback != null) {
                         String displayPath = Paths.get("export", modelID + ".ysm").toString();
                         callback.accept(new ExportResult(true, null, displayPath, "", 0));

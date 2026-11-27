@@ -1,0 +1,25 @@
+{
+  "format_version": "1.8.0",
+  "animations": {
+    "idle": {
+      "loop": true,
+      "animation_length": 2,
+      "bones": {
+        "parameter_indicator": {
+          "rotation": [
+            0,
+            "rysmjs.sum(15, 30)",
+            0
+          ]
+        },
+        "health_gauge": {
+          "position": [
+            0,
+            "rysmjs.health_ratio() * 2",
+            0
+          ]
+        }
+      }
+    }
+  }
+}

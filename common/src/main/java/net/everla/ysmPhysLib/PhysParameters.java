@@ -67,7 +67,7 @@ public record PhysParameters(float r, float g, Float gw, float s, float a, float
                 var names=key.equals("disable")?da:ea; var vars=key.equals("disable")?dv:ev;
                 names.clear(); vars.clear();
                 for(String item:valueText.substring(1,valueText.length()-1).split(",",-1)) { item=item.trim(); if(item.isEmpty()) throw new IllegalArgumentException("empty "+key+" entry");
-                    var match=java.util.regex.Pattern.compile("^((?:v|variable)\\.[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)\\s*(>=|<=|!=|=|>|<)\\s*([+-]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?)$").matcher(item);
+                    var match=java.util.regex.Pattern.compile("^((?:v|variable|rysmjs)\\.[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)\\s*(>=|<=|!=|=|>|<)\\s*([+-]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?)$").matcher(item);
                     if(match.matches()) {
                         float v=Float.parseFloat(match.group(3)); if(!Float.isFinite(v)) throw new IllegalArgumentException("non-finite condition");
                         vars.add(new Condition(match.group(1),match.group(2),v));

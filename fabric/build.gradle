@@ -25,6 +25,12 @@ configurations {
 }
 
 dependencies {
+    implementation "org.mozilla:rhino:1.7.15"
+    shadowBundle "org.mozilla:rhino:1.7.15"
+    implementation "org.apache.commons:commons-compress:1.26.2"
+    shadowBundle "org.apache.commons:commons-compress:1.26.2"
+    implementation "org.tukaani:xz:1.9"
+    shadowBundle "org.tukaani:xz:1.9"
     modImplementation "net.fabricmc:fabric-loader:$rootProject.fabric_loader_version"
 
     modImplementation fabricApi.module("fabric-networking-api-v1", rootProject.fabric_api_version)
@@ -67,6 +73,14 @@ processResources {
 
 shadowJar {
     configurations = [project.configurations.shadowBundle]
+    relocate 'org.mozilla.javascript', 'net.everla.ysmJsLib.shaded.rhino'
+    relocate 'org.apache.commons.compress', 'net.everla.ysmJsLib.shaded.compress'
+    relocate 'org.apache.commons.io', 'net.everla.ysmJsLib.shaded.io'
+    relocate 'org.apache.commons.lang3', 'net.everla.ysmJsLib.shaded.lang3'
+    relocate 'org.apache.commons.codec', 'net.everla.ysmJsLib.shaded.codec'
+    relocate 'org.tukaani.xz', 'net.everla.ysmJsLib.shaded.xz'
+    exclude 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA'
+
     archiveClassifier = 'dev-shadow'
 }
 

@@ -19,6 +19,8 @@ import java.util.List;
 public class AnimatedGeoModel {
 
     public net.everla.ysmPhysLib.PhysSimulation ysmPhysics;
+    public net.everla.ysmJsLib.ScriptInstance rysmScript;
+    public boolean rysmScriptFailed;
 
     private static final int MATRIX_STRIDE = 12;
 

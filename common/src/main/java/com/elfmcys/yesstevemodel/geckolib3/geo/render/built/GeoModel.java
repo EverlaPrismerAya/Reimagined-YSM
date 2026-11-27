@@ -78,7 +78,7 @@ public class GeoModel {
 
     public final boolean hasCustomLimbs;
 
-    public final boolean hasFacingCameraBones;
+    public boolean hasFacingCameraBones;
 
     @NotNull
     private final GeometryDescription properties;
@@ -100,12 +100,16 @@ public class GeoModel {
 
     public net.everla.ysmPhysLib.PhysDefinition ysmPhysics;
 
+    public net.everla.ysmJsLib.ScriptModel scripts;
+    public void hasFacingCameraBonesOverride(boolean value) {hasFacingCameraBones |= value;}
     public boolean hasGroupStyles;
     public boolean hasFrameAnimations;
 
     public static class BakedBone {
         public String name;
         public boolean glow;
+        public boolean facingCamera;
+        public String cosmicEffect = "";
         public boolean facingCameraSubtree;
         public net.everla.reimaginedysm.gpu.FrameAnimation frameAnimation;
         public float frameHeight;
@@ -132,10 +136,10 @@ public class GeoModel {
 
     public static void classifyFacingCameraBones(List<BakedBone> bones) {
         for (BakedBone bone : bones) {
-            bone.facingCameraSubtree = bone.name.startsWith("FacingCamera");
+            bone.facingCameraSubtree = (bone.facingCamera || bone.name.startsWith("FacingCamera"));
             for (int parent = bone.parentIdx; parent != -1 && !bone.facingCameraSubtree;
                  parent = bones.get(parent).parentIdx) {
-                bone.facingCameraSubtree = bones.get(parent).name.startsWith("FacingCamera");
+                bone.facingCameraSubtree = (bones.get(parent).facingCamera || bones.get(parent).name.startsWith("FacingCamera"));
             }
         }
     }

@@ -1,0 +1,34 @@
+{
+  "spec": 2,
+  "metadata": {
+    "name": "RYSM JS 全特性测试台",
+    "tips": "ESC 切换；E/背包快捷键/鼠标左键显示指示灯。详见 examples/rysmjs/README.md",
+    "license": {
+      "type": "CC0-1.0"
+    },
+    "authors": [
+      {
+        "name": "RYSM contributors",
+        "role": "example"
+      }
+    ]
+  },
+  "properties": {
+    "free": true,
+    "default_texture": "skin",
+    "preview_animation": "idle"
+  },
+  "files": {
+    "player": {
+      "model": {
+        "main": "models/main.json"
+      },
+      "texture": [
+        "textures/skin.png"
+      ],
+      "animation": {
+        "main": "animations/main.animation.json"
+      }
+    }
+  }
+}

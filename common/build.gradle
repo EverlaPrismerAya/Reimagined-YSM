@@ -5,6 +5,9 @@ architectury {
 sourceSets.main.resources { srcDir 'src/generated/resources' }
 
 dependencies {
+    implementation "org.mozilla:rhino:1.7.15"
+    implementation "org.apache.commons:commons-compress:1.26.2"
+    implementation "org.tukaani:xz:1.9"
     // We depend on Fabric Loader here to use the Fabric @Environment annotations,
     // which get remapped to the correct annotations on each platform.
     // Do NOT use other classes from Fabric Loader.
@@ -85,3 +88,32 @@ tasks.register('compileNative') {
 }
 
 processResources.dependsOn compileNative
+
+tasks.register('scriptChecks', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'net.everla.ysmJsLib.ScriptChecks'
+    workingDir rootProject.projectDir
+    if (project.hasProperty('scriptGpu')) {
+        classpath += configurations.detachedConfiguration(dependencies.create('org.lwjgl:lwjgl:3.3.1:natives-windows'), dependencies.create('org.lwjgl:lwjgl-glfw:3.3.1:natives-windows'), dependencies.create('org.lwjgl:lwjgl-opengl:3.3.1:natives-windows'))
+    }
+    if (project.hasProperty('scriptExamples')) args rootProject.file('examples/rysmjs').absolutePath
+    if (project.hasProperty('scriptGpu')) args '--gpu'
+}
+
+tasks.register('scriptMemoryChecks', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'net.everla.ysmJsLib.ScriptMemoryChecks'
+    workingDir rootProject.projectDir
+    maxHeapSize = '96m'
+}
+
+tasks.register('modelLoadingChecks', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'net.everla.ysmJsLib.ModelLoadingChecks'
+    workingDir rootProject.projectDir
+    maxHeapSize = '512m'
+    if (project.hasProperty('modelLog')) args project.property('modelLog')
+}

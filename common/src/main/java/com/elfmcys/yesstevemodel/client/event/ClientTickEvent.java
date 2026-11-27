@@ -27,6 +27,7 @@ public final class ClientTickEvent {
         if (!YesSteveModel.isAvailable()) {
             return;
         }
+        net.everla.ysmJsLib.ScriptInput.tick(client);
         tickCount++;
         UploadManager.processPendingUploads();
         ModelUploadSession.tickCurrent();
@@ -37,6 +38,7 @@ public final class ClientTickEvent {
         LocalPlayer localPlayer = client.player;
         if (localPlayer != null) {
             PlayerCapability.get(localPlayer).ifPresent(cap -> cap.tickAnimations());
+            net.everla.ysmJsLib.ScriptInstance.clientTick(client);
         }
     }
 

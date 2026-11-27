@@ -68,6 +68,8 @@ public final class NetworkHandler {
         clientHandshakeComplete = false;
         clientProtocolConnection = null;
         serverSupportsModelSyncFragments = false;
+        net.everla.ysmJsLib.ScriptTransfer.clear();
+        net.everla.ysmJsLib.ScriptSync.supported=false;net.everla.ysmJsLib.ScriptSync.enabled=false;net.everla.ysmJsLib.ScriptSync.Client.clear();
     }
 
     public static void setServerSupportsModelSyncFragments(boolean supported) {
@@ -122,6 +124,11 @@ public final class NetworkHandler {
             return;
         }
         YSMChannel.init(CHANNEL_ID, VERSION);
+        register(85, net.everla.ysmJsLib.ScriptSync.Submit.class, net.everla.ysmJsLib.ScriptSync.Submit::encode, net.everla.ysmJsLib.ScriptSync.Submit::decode, net.everla.ysmJsLib.ScriptSync.Submit::handle, PacketDirection.PLAY_TO_SERVER);
+        register(86, net.everla.ysmJsLib.ScriptSync.Values.class, net.everla.ysmJsLib.ScriptSync.Values::encode, net.everla.ysmJsLib.ScriptSync.Values::decode, net.everla.ysmJsLib.ScriptSync.Values::handle, PacketDirection.PLAY_TO_CLIENT);
+        register(87, net.everla.ysmJsLib.ScriptSync.Policy.class, net.everla.ysmJsLib.ScriptSync.Policy::encode, net.everla.ysmJsLib.ScriptSync.Policy::decode, net.everla.ysmJsLib.ScriptSync.Policy::handle, PacketDirection.PLAY_TO_CLIENT);
+        register(84, net.everla.ysmJsLib.ScriptTransfer.Request.class, net.everla.ysmJsLib.ScriptTransfer.Request::encode, net.everla.ysmJsLib.ScriptTransfer.Request::decode, net.everla.ysmJsLib.ScriptTransfer.Request::handle, PacketDirection.PLAY_TO_SERVER);
+        register(83, net.everla.ysmJsLib.ScriptTransfer.Chunk.class, net.everla.ysmJsLib.ScriptTransfer.Chunk::encode, net.everla.ysmJsLib.ScriptTransfer.Chunk::decode, net.everla.ysmJsLib.ScriptTransfer.Chunk::handle, PacketDirection.PLAY_TO_CLIENT);
         register(81, C2SServerConfigPacket.class, C2SServerConfigPacket::encode, C2SServerConfigPacket::decode, C2SServerConfigPacket::handle, PacketDirection.PLAY_TO_SERVER);
         register(82, S2CServerConfigPacket.class, S2CServerConfigPacket::encode, S2CServerConfigPacket::decode, S2CServerConfigPacket::handle, PacketDirection.PLAY_TO_CLIENT);
         register(80, S2CCommonPolicyPacket.class, S2CCommonPolicyPacket::encode, S2CCommonPolicyPacket::decode, S2CCommonPolicyPacket::handle, PacketDirection.PLAY_TO_CLIENT);

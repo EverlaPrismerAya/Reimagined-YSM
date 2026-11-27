@@ -103,6 +103,7 @@ public class YSMFolderDeserializer implements AutoCloseable {
         model.properties.sha256 = finalFolderHash;
 
         model.footer.version = 65535;
+        if(rootPath!=null)net.everla.ysmJsLib.ScriptResources.folder(model,rootPath);
         return model;
     }
 

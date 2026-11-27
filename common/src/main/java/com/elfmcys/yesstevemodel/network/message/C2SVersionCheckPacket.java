@@ -16,6 +16,8 @@ public class C2SVersionCheckPacket {
     private final String version;
     private final boolean restart;
     private final boolean supportsModelSyncFragments;
+    private boolean scripts=true;
+    private boolean scriptSync=true;
 
     public C2SVersionCheckPacket() {
         this(NetworkHandler.VERSION, true);
@@ -40,7 +42,10 @@ public class C2SVersionCheckPacket {
     public static C2SVersionCheckPacket decode(FriendlyByteBuf buf) {
         String version = buf.readUtf();
         boolean supportsModelSyncFragments = buf.readableBytes() > 0 && MODEL_SYNC_FRAGMENT_BRAND.equals(buf.readUtf());
-        return new C2SVersionCheckPacket(version, supportsModelSyncFragments,buf.isReadable() && buf.readBoolean());
+        var packet=new C2SVersionCheckPacket(version, supportsModelSyncFragments,buf.isReadable() && buf.readBoolean());
+        packet.scripts=buf.isReadable() && buf.readBoolean();
+        packet.scriptSync=packet.scripts && buf.isReadable() && buf.readBoolean();
+        return packet;
     }
 
     public static void encode(C2SVersionCheckPacket message, FriendlyByteBuf buf) {
@@ -52,6 +57,8 @@ public class C2SVersionCheckPacket {
         if (message.supportsModelSyncFragments) {
             buf.writeUtf(MODEL_SYNC_FRAGMENT_BRAND);
             buf.writeBoolean(message.restart);
+            buf.writeBoolean(message.scripts);
+            buf.writeBoolean(message.scriptSync);
         }
     }
 
@@ -66,6 +73,8 @@ public class C2SVersionCheckPacket {
         if (first || (message.restart && NetworkHandler.isConnectionValid(ctx.getConnection()))) {
             ctx.enqueueWork(()-> {
             NetworkHandler.setClientSupportsModelSyncFragments(sender.getUUID(), message.supportsModelSyncFragments);
+            net.everla.ysmJsLib.ScriptTransfer.capability(sender.getUUID(),ctx.getConnection(),message.scripts);
+            net.everla.ysmJsLib.ScriptSync.capability(sender,ctx.getConnection(),message.scriptSync);
             ServerModelManager.validatePlayerModel(sender);
             ModelInfoCapability.get(sender).ifPresent(cap -> {
                 cap.setMandatory(false);

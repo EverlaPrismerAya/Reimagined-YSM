@@ -219,6 +219,7 @@ public abstract class AnimatableEntity<TEntity extends Entity> {
     @Nullable
     public AnimationEvent<?> processAnimationImpl(float partialTick, boolean z) {
         net.everla.ysmPhysLib.PlayerPhysics.beforeAnimation(this.currentModel);
+        net.everla.ysmJsLib.ScriptInstance.restore(this.currentModel);
         if (this.currentModel == null) {
             return null;
         }
@@ -271,6 +272,7 @@ public abstract class AnimatableEntity<TEntity extends Entity> {
         AnimationContext<?> context = new AnimationContext<>(entity, this, event, modelData);
         context.setLogger(getLogger());
         setCustomAnimations(context, event);
+        net.everla.ysmJsLib.ScriptInstance.animate(context);
         return event;
     }
 

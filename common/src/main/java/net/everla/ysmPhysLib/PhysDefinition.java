@@ -30,7 +30,7 @@ public final class PhysDefinition {
         List<GeoBone> hierarchy = new ArrayList<>();
         for (int i=0;i<imported.size();i++) {
             GeoBone original=imported.get(i);
-            GeoBone copy=new GeoBone(original.getName(),original.isHidden(),original.cubesAreHidden(),original.childBonesAreHiddenToo(),
+            GeoBone copy=new GeoBone(model.scripts==null?original.getName():model.scripts.physicsName(original.getName()),original.isHidden(),original.cubesAreHidden(),original.childBonesAreHiddenToo(),
                     original.getPivotX(),original.getPivotY(),original.getPivotZ(),original.getRotX(),original.getRotY(),original.getRotZ());
             copy.parentIdx=model.bakedBones==null?original.parentIdx:model.bakedBones.get(i).parentIdx;
             hierarchy.add(copy);
