@@ -523,6 +523,23 @@ public class YSMClientMapper {
             bb.rotZ = rb.rotation[2];
             bb.parentIdx = -1;
 
+            if (rb.name.startsWith("FrameAnimation")) {
+                try {
+                    bb.frameAnimation = net.everla.reimaginedysm.gpu.FrameAnimation.parse(rb.name);
+                    if (rb.cubes.size() != 1 || rb.cubes.get(0).faces.stream().filter(ItemThickness::hasUv).count() != 1)
+                        throw new IllegalArgumentException("expected exactly one cube with one UV face");
+                    var face = rb.cubes.get(0).faces.stream().filter(ItemThickness::hasUv).findFirst().orElseThrow();
+                    float minV=face.v[0], maxV=minV;
+                    for (float v : face.v) { minV=Math.min(minV,v); maxV=Math.max(maxV,v); }
+                    bb.frameHeight=maxV-minV;
+                    if (!Float.isFinite(bb.frameHeight) || bb.frameHeight <= 0 || minV < 0
+                            || minV + bb.frameHeight * bb.frameAnimation.count() > 1.00001f)
+                        throw new IllegalArgumentException("frame strip must have positive height and fit inside the texture");
+                } catch (IllegalArgumentException ex) {
+                    bb.frameAnimation=null;
+                    com.elfmcys.yesstevemodel.YesSteveModel.LOGGER.warn("[FrameAnimation] {}: {}", rb.name, ex.getMessage());
+                }
+            }
             boolean forceCull = allCutout;
 
             boolean item=rb.name.startsWith("ysmItem@");
@@ -555,10 +572,20 @@ public class YSMClientMapper {
                 boolean cubeHasEmpty = false;
 
                 for (RawYsmModel.RawFace rf : rc.faces) {
-                    if(item && !ItemThickness.hasUv(rf)) continue;
+                    if((item || bb.frameAnimation != null) && !ItemThickness.hasUv(rf)) continue;
                     if (net.everla.ysmPhysLib.PhysParameters.isCollider(rb.name)
                             && java.util.Arrays.stream(new double[]{rf.u[0],rf.u[1],rf.u[2],rf.u[3],rf.v[0],rf.v[1],rf.v[2],rf.v[3]}).allMatch(uv -> uv == -1)) continue;
                     int faceState = scanner != null ? scanner.scan(rf) : TranslucencyScanner.FLAG_VISIBLE;
+                    if (bb.frameAnimation != null && scanner != null) {
+                        // Scan the complete strip: a transparent first frame must not discard later frames.
+                        var strip = new RawYsmModel.RawFace();
+                        strip.u = rf.u;
+                        float minV=rf.v[0],maxV=minV;
+                        for(float v:rf.v) { minV=Math.min(minV,v); maxV=Math.max(maxV,v); }
+                        float end=maxV+bb.frameHeight*(bb.frameAnimation.count()-1);
+                        strip.v = new float[]{minV,minV,end,end};
+                        faceState = scanner.scan(strip);
+                    }
                     cubeHasEmpty |= (faceState & TranslucencyScanner.FLAG_EMPTY) != 0;
 
                     if ((faceState & TranslucencyScanner.FLAG_VISIBLE) == 0) {
@@ -653,6 +680,7 @@ public class YSMClientMapper {
         GeoModel mesh = buildMesh(geoBones.toArray(new GeoBone[0]), parentMap, context, translucencyArray);
 
         mesh.bakedBones = bakedBones;
+        mesh.hasFrameAnimations = bakedBones.stream().anyMatch(b -> b.frameAnimation != null);
         boolean[] styled = new boolean[bakedBones.size()];
         for(int i=0;i<bakedBones.size();i++) resolveGroupStyle(bakedBones,i,styled);
         mesh.hasGroupStyles=bakedBones.stream().anyMatch(b -> b.style.cosmic() || b.style.outline());

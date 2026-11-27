@@ -73,12 +73,12 @@ public final class GroupEffectRenderer {
     }
     private static boolean render(PoseStack.Pose pose,GeoModel model,float[] params,float[] state,
                                   int textureIndex,int part,int light,int overlay,float r,float g,float b,float alpha,
-                                  ResourceLocation texture,boolean preview,boolean facingOnly) {
+                                  ResourceLocation texture,boolean preview,boolean dynamicOnly) {
         if(model.bakedBones==null || !compile()) return false;
-        if(!facingOnly && GpuCapability.isAvailable() && com.elfmcys.yesstevemodel.NativeLibLoader.isLoaded()) {
+        if(!dynamicOnly && GpuCapability.isAvailable() && com.elfmcys.yesstevemodel.NativeLibLoader.isLoaded()) {
             try(var saved=new DrawState();var compute=new ShaderUtil.SavedComputeState(3)) {
                 if(renderGpu(pose,model,params,textureIndex,part,light,overlay,r,g,b,alpha,texture,preview)) {
-                    if(model.hasFacingCameraBones) render(pose,model,params,state,textureIndex,part,light,overlay,r,g,b,alpha,texture,preview,true);
+                    if(model.hasFacingCameraBones || model.hasFrameAnimations) render(pose,model,params,state,textureIndex,part,light,overlay,r,g,b,alpha,texture,preview,true);
                     return true;
                 }
             }
@@ -86,7 +86,7 @@ public final class GroupEffectRenderer {
         var mc=Minecraft.getInstance();
         var transforms=new Matrix4f[model.bakedBones.size()];
         var visible=new boolean[transforms.length];
-        boolean gpuPose=!facingOnly && !preview && net.everla.ysmPhysLib.GpuPhysics.readRenderMatrices(params,pose.pose(),light,transforms,visible);
+        boolean gpuPose=!dynamicOnly && !preview && net.everla.ysmPhysLib.GpuPhysics.readRenderMatrices(params,pose.pose(),light,transforms,visible);
         if(!gpuPose) params=net.everla.ysmPhysLib.PlayerPhysics.hideEndpoints(model,params);
         Matrix4f camera=FacingCameraTransform.previewToCamera(pose.pose(),RenderSystem.getProjectionMatrix().m11());
         if(model.hasFacingCameraBones && net.everla.ysmPhysLib.WorldPhysicsContext.allows(preview)) {
@@ -96,11 +96,12 @@ public final class GroupEffectRenderer {
         var solids=new ArrayList<Solid>();
         for(int i=0;i<transforms.length;i++) {
             var bone=model.bakedBones.get(i);
-            if(facingOnly && !bone.facingCameraSubtree) continue;
+            if(dynamicOnly && !bone.dynamicGeometry()) continue;
             Matrix4f local=gpuPose?transforms[i]:NativeModelRenderer.calculateBoneMatrix(i,model.bakedBones,params,transforms,visible,new Matrix4f(),state,camera);
             if(!visible[i] || params[i*12+9]!=0 || (part!=0 && bone.partMask!=part && bone.partMask!=3)) continue;
             Matrix4f matrix=gpuPose?new Matrix4f(local):new Matrix4f(pose.pose()).mul(local);
             Matrix3f normal=matrix.normal(new Matrix3f());
+            float frameV=NativeModelRenderer.frameOffset(bone);
             for(var cube:bone.cubes) {
                 var faces=new ArrayList<Face>();
                 float[] bounds={Float.POSITIVE_INFINITY,Float.POSITIVE_INFINITY,Float.POSITIVE_INFINITY,
@@ -111,7 +112,7 @@ public final class GroupEffectRenderer {
                     Vector3f n=new Vector3f(q.normal).mul(normal).normalize();
                     for(int v=0;v<4;v++) {
                         Vector4f p=new Vector4f(q.positions[v*3],q.positions[v*3+1],q.positions[v*3+2],1).mul(matrix);
-                        poly.add(new float[]{p.x,p.y,p.z,q.uvs[v*2],q.uvs[v*2+1],n.x,n.y,n.z});
+                        poly.add(new float[]{p.x,p.y,p.z,q.uvs[v*2],q.uvs[v*2+1]+frameV,n.x,n.y,n.z});
                         center.add(p.x,p.y,p.z);count++;
                         for(int axis=0;axis<3;axis++) {bounds[axis]=Math.min(bounds[axis],poly.get(v)[axis]);bounds[axis+3]=Math.max(bounds[axis+3],poly.get(v)[axis]);}
                     }

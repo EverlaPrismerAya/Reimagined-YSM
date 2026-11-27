@@ -37,7 +37,7 @@ public interface IGeoRenderer<T extends AnimatableEntity<?>> {
         animatable.resetAnimationState();
         net.everla.ysmPhysLib.PlayerPhysics.render(model, animatable, partialTick, poseStack.last().pose());
         ResourceLocation tex = renderType.isOutline() ? null : animatable.getTextureLocation();
-        NativeModelRenderer.renderMesh(vertexConsumer, poseStack.last(), model.getGeoModel(), model.getMatrixData(), model.getAbsPivotData(), i, 0, i2, i3, f2, f3, f4, f5, tex);
+        NativeModelRenderer.renderMesh(vertexConsumer, poseStack.last(), model.getGeoModel(), model.getMatrixData(), model.getAbsPivotData(), i, 0, i2, i3, f2, f3, f4, f5, tex, animatable, partialTick);
         setCurrentModelRenderCycle(EModelRenderCycle.REPEATED);
     }
 

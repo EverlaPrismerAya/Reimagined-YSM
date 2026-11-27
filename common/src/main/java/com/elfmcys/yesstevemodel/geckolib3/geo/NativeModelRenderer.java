@@ -59,6 +59,39 @@ public class NativeModelRenderer {
     }
 
     public static void renderMesh(VertexConsumer buffer, PoseStack.Pose pose, GeoModel model, float[] boneParams, float[] stateBuffer, int textureIndex, int renderPartMask, int packedLight, int packedOverlay, float red, float green, float blue, float alpha, net.minecraft.resources.ResourceLocation textureLocation) {
+        renderMesh(buffer, pose, model, boneParams, stateBuffer, textureIndex, renderPartMask, packedLight,
+                packedOverlay, red, green, blue, alpha, textureLocation, null, 0);
+    }
+
+    private record FrameContext(double ticks, java.util.function.ToDoubleFunction<String> variables) {}
+    private static final ThreadLocal<FrameContext> FRAME_CONTEXT = new ThreadLocal<>();
+
+    static float frameOffset(GeoModel.BakedBone bone) {
+        if (bone.frameAnimation == null) return 0;
+        FrameContext context = FRAME_CONTEXT.get();
+        return bone.frameHeight * bone.frameAnimation.frame(context == null ? 0 : context.ticks,
+                context == null ? path -> 0 : context.variables);
+    }
+
+    public static void renderMesh(VertexConsumer buffer, PoseStack.Pose pose, GeoModel model, float[] boneParams,
+            float[] stateBuffer, int textureIndex, int renderPartMask, int packedLight, int packedOverlay,
+            float red, float green, float blue, float alpha, net.minecraft.resources.ResourceLocation textureLocation,
+            com.elfmcys.yesstevemodel.geckolib3.core.AnimatableEntity<?> animatable, float partialTick) {
+        FrameContext previous = FRAME_CONTEXT.get();
+        if (model.hasFrameAnimations) FRAME_CONTEXT.set(new FrameContext(
+                animatable == null ? 0 : animatable.getEntity().tickCount + (double) partialTick,
+                animatable == null ? path -> 0 : animatable.getEvaluationContext()::physicsVariable));
+        try {
+            renderMeshCurrent(buffer, pose, model, boneParams, stateBuffer, textureIndex, renderPartMask,
+                    packedLight, packedOverlay, red, green, blue, alpha, textureLocation);
+        } finally {
+            if (previous == null) FRAME_CONTEXT.remove(); else FRAME_CONTEXT.set(previous);
+        }
+    }
+
+    private static void renderMeshCurrent(VertexConsumer buffer, PoseStack.Pose pose, GeoModel model, float[] boneParams,
+            float[] stateBuffer, int textureIndex, int renderPartMask, int packedLight, int packedOverlay,
+            float red, float green, float blue, float alpha, net.minecraft.resources.ResourceLocation textureLocation) {
         OculusCompat.updatePBRState();
         RenderSystem.getProjectionMatrix().mul(RenderSystem.getModelViewMatrix(), projectionModelViewMatrix);
         boolean isPreview = isPreview();
@@ -84,13 +117,13 @@ public class NativeModelRenderer {
 
             if (OculusCompat.isShaderPackInUse()) {
                 if (IrisRenderPath.tryRender(model, pose, boneParams, textureIndex, renderPartMask, packedLight, packedOverlay, red, green, blue, alpha, textureLocation)) {
-                    renderFacingCamera(buffer, pose, model, boneParams, stateBuffer, textureIndex,
+                    renderDynamicGeometry(buffer, pose, model, boneParams, stateBuffer, textureIndex,
                             renderPartMask, packedLight, packedOverlay, red, green, blue, alpha, isPreview);
                     return;
                 }
             } else {
                 if (GpuRenderPath.tryRender(model, pose, boneParams, stateBuffer, textureIndex, renderPartMask, packedLight, packedOverlay, red, green, blue, alpha, textureLocation)) {
-                    renderFacingCamera(buffer, pose, model, boneParams, stateBuffer, textureIndex,
+                    renderDynamicGeometry(buffer, pose, model, boneParams, stateBuffer, textureIndex,
                             renderPartMask, packedLight, packedOverlay, red, green, blue, alpha, isPreview);
                     return;
                 }
@@ -116,7 +149,7 @@ public class NativeModelRenderer {
                     red, green, blue, alpha,
                     isPreview
             );
-            renderFacingCamera(buffer, pose, model, boneParams, stateBuffer, textureIndex,
+            renderDynamicGeometry(buffer, pose, model, boneParams, stateBuffer, textureIndex,
                     renderPartMask, packedLight, packedOverlay, red, green, blue, alpha, isPreview);
         } else {
             renderModel(
@@ -137,10 +170,10 @@ public class NativeModelRenderer {
         }
     }
 
-    private static void renderFacingCamera(VertexConsumer buffer, PoseStack.Pose pose, GeoModel model,
+    private static void renderDynamicGeometry(VertexConsumer buffer, PoseStack.Pose pose, GeoModel model,
             float[] params, float[] state, int texture, int part, int light, int overlay,
             float r, float g, float b, float a, boolean preview) {
-        if (!model.hasFacingCameraBones) return;
+        if (!model.hasFacingCameraBones && !model.hasFrameAnimations) return;
         renderModel(buffer, pose, projectionModelViewMatrix, OptiFineDetector.isOptifinePresent(), model,
                 net.everla.ysmPhysLib.PlayerPhysics.hideEndpoints(model, params), state,
                 texture, part, light, overlay, r, g, b, a, preview, true);
@@ -167,7 +200,7 @@ public class NativeModelRenderer {
             Matrix4f projectionModelViewMatrix, boolean isCompatMode, GeoModel mesh,
             float[] boneParams, float[] stateBuffer, int textureIndex, int renderPartMask,
             int packedLight, int packedOverlay, float r, float g, float b, float a,
-            boolean isPreview, boolean facingOnly) {
+            boolean isPreview, boolean dynamicOnly) {
 
         if (mesh.bakedBones == null || mesh.bakedBones.isEmpty()) return;
 
@@ -196,7 +229,7 @@ public class NativeModelRenderer {
         Matrix4f[] boneLocalTransforms = new Matrix4f[mesh.bakedBones.size()];
         boolean[] boneVisible = new boolean[mesh.bakedBones.size()];
 
-        if (!facingOnly) {
+        if (!dynamicOnly) {
             for (int i = 0; i < mesh.bakedBones.size(); i++) {
                 calculateBoneMatrix(i, mesh.bakedBones, boneParams, boneLocalTransforms, boneVisible,
                         identityMat, stateBuffer, modelToCamera);
@@ -204,7 +237,7 @@ public class NativeModelRenderer {
         }
         for (int i = 0; i < mesh.bakedBones.size(); i++) {
             GeoModel.BakedBone bone = mesh.bakedBones.get(i);
-            if (facingOnly && !bone.facingCameraSubtree) continue;
+            if (dynamicOnly && !bone.dynamicGeometry()) continue;
             if (renderPartMask != 0 && bone.partMask != renderPartMask && bone.partMask != 3) continue;
             calculateBoneMatrix(i, mesh.bakedBones, boneParams, boneLocalTransforms, boneVisible,
                     identityMat, stateBuffer, modelToCamera);
@@ -220,6 +253,7 @@ public class NativeModelRenderer {
 
             int currentPackedLight = bone.glow ? LightTexture.pack(15, 15) : packedLight;
 
+            float frameV = frameOffset(bone);
             for (GeoModel.BakedCube cube : bone.cubes) {
                 for (GeoModel.BakedQuad quad : cube.quads) {
                     if (cube.cullable) {
@@ -236,7 +270,7 @@ public class NativeModelRenderer {
                         int positionOffset = v * 3;
                         int uvOffset = v * 2;
                         tempPos.set(quad.positions[positionOffset], quad.positions[positionOffset + 1], quad.positions[positionOffset + 2], 1.0f).mul(globalBoneMat);
-                        vertexConsumer.vertex(tempPos.x(), tempPos.y(), tempPos.z(), r, g, b, a, quad.uvs[uvOffset], quad.uvs[uvOffset + 1], packedOverlay, currentPackedLight, tempNorm.x(), tempNorm.y(), tempNorm.z());
+                        vertexConsumer.vertex(tempPos.x(), tempPos.y(), tempPos.z(), r, g, b, a, quad.uvs[uvOffset], quad.uvs[uvOffset + 1] + frameV, packedOverlay, currentPackedLight, tempNorm.x(), tempNorm.y(), tempNorm.z());
                     }
                 }
             }

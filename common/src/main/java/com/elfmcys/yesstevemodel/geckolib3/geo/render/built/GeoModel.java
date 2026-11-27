@@ -101,11 +101,16 @@ public class GeoModel {
     public net.everla.ysmPhysLib.PhysDefinition ysmPhysics;
 
     public boolean hasGroupStyles;
+    public boolean hasFrameAnimations;
 
     public static class BakedBone {
         public String name;
         public boolean glow;
         public boolean facingCameraSubtree;
+        public net.everla.reimaginedysm.gpu.FrameAnimation frameAnimation;
+        public float frameHeight;
+
+        public boolean dynamicGeometry() { return facingCameraSubtree || frameAnimation != null; }
         public net.everla.reimaginedysm.gpu.GroupStyle style = net.everla.reimaginedysm.gpu.GroupStyle.NONE;
         public int surfaceGroup;
         public int outlineGroup = -1;
@@ -114,7 +119,7 @@ public class GeoModel {
         // Keep the full skeleton/indexing for animation and physics, but only
         // submit ordinary geometry to the native/GPU caches.
         public List<BakedCube> acceleratedCubes() {
-            return facingCameraSubtree ? List.of() : cubes;
+            return dynamicGeometry() ? List.of() : cubes;
         }
         public int parentIdx = -1;
         public float pivotX, pivotY, pivotZ;
