@@ -17,7 +17,7 @@ public record PhysParameters(float r, float g, Float gw, float s, float a, float
         }
     }
     /** Baking recipe identity, independent of the experimental mod release version. */
-    public static final String GEOMETRY_CACHE_KEY = "ysmItem-contour-ysmTail-closedVolume-cull-5";
+    public static final String GEOMETRY_CACHE_KEY = "rysmjs-group-declarations-8";
     public static final PhysParameters DEFAULT = new PhysParameters(1, 9.8f, null, 20, 90, 1, 0.5f, false,List.of(),List.of(),List.of(),List.of());
     public static final PhysParameters TAIL_DEFAULT = new PhysParameters(10, 0, 3f, 16, 50, 1, 0.5f, false,List.of(),List.of(),List.of(),List.of());
 
@@ -31,10 +31,6 @@ public record PhysParameters(float r, float g, Float gw, float s, float a, float
 
     public static boolean isEnd(String name) {
         return name.startsWith("ysmPhysEnd@") && name.length() > 11 && name.indexOf('@',11)<0;
-    }
-
-    public static boolean isCollider(String name) {
-        return name.startsWith("ysmPhysC@") && name.length()>9 && name.indexOf('@',9)<0;
     }
 
     public static boolean isCandidate(String name) {

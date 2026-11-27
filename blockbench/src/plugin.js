@@ -1030,7 +1030,7 @@
     function writeScriptTransaction(writes) {
         const fs=require('fs'),path=require('path'),before=new Map(),temps=[];
         for(const [file,source] of writes) {
-            if(fs.existsSync(file)&&!fs.lstatSync(file).isFile())throw new Error('脚本目标必须为普通文件：'+file);
+            if(fs.existsSync(file)&&!(fs.lstatSync||fs.statSync)(file).isFile())throw new Error('脚本目标必须为普通文件：'+file);
             before.set(file,fs.existsSync(file)?fs.readFileSync(file):null);
             if(source!==null)checkSource(source);
         }
@@ -1152,8 +1152,8 @@
         Project.rysm_scripts={...(Project.rysm_scripts||{}),[name]:source};Project.saved=false;
         if(!root)Blockbench.export({type:'RYSM JavaScript',extensions:['js'],name:name.split('/').pop().slice(0,-3),content:source});
     }
-    function saveScripts() {
-        if(!supported()||!modelRoot())return;
+    function saveScripts(event) {
+        if(!event?.saved||event.project!==Project||!supported()||!modelRoot())return;
         try{writeScripts();}catch(error){Blockbench.showQuickMessage('RYSM 保存失败：'+error.message);}
     }
     const scriptHints = [
@@ -1477,20 +1477,20 @@
     }
     const api={restoreImportedGroupNames,modelScope,qualifiedName,availableGroupNames,projectEntries,physicsChain,physicsForm,applyChainProperties,editPhysicsChain,editScriptProperties,props,isPhysics,physicsKind,inheritValues,effectivePhysics,validateProperties,setProperties,createPhysics,removePhysics,physicsTopology,
         sectorLines,capsuleLines,cosmicRegistrationSource,scriptCompletions,eventContext,scriptAnalysis,parameterHint,attachScriptEditor,generatedGroups,groupSource,scriptSource,scriptPath,
-        syncScriptGroups,readGeneratedConfig,generatedFile,readOnlyScript,writeScripts,saveUserScript,scriptFiles,importScriptGroups,writeScriptTransaction,editScripts,updateOverlay,disposeOverlay,
+        syncScriptGroups,readGeneratedConfig,generatedFile,readOnlyScript,writeScripts,saveScripts,saveUserScript,scriptFiles,importScriptGroups,writeScriptTransaction,editScripts,updateOverlay,disposeOverlay,
         pickPhysics,finishPhysicsPick,hitCollider,selectionKey};
     if(typeof module!=='undefined'&&module.exports)module.exports=api;
     if(typeof Plugin==='undefined')return;
     function action(callback){return ()=>{try{callback();}catch(error){Blockbench.showQuickMessage(error.message);}};}
     Plugin.register('reimagined_ysm_physics_groups',{
-        title:'Reimagined YSM 编辑器',author:'Reimagined YSM contributors',icon:'tune',version:'4.1.0',variant:'both',min_version:'5.0.0',
+        title:'Reimagined YSM 编辑器',author:'Reimagined YSM contributors',icon:'tune',version:'4.1.1',variant:'both',min_version:'5.0.0',
         description:'新版 RYSM JS 组属性、离线脚本编辑器，以及编辑模式物理骨链与碰撞体积辅助。',
         onload(){
             scriptProperty=new Property(Group,'object','rysm_properties',{default:{}});
             scriptOwnedProperty=new Property(Group,'boolean','rysm_script_owned',{default:false});
             scriptProjectProperty=new Property(ModelProject,'object','rysm_scripts',{default:{}});
             scriptDraftProperty=new Property(ModelProject,'object','rysm_script_drafts',{default:{}});
-            Blockbench.on('save_project',saveScripts);
+            Blockbench.on('saved_state_changed',saveScripts);
             for(const codec of [Codecs.bedrock,Codecs.bedrock_old]){codec?.on('parse',beforeGeometryImport);codec?.on('parsed',afterGeometryImport);}
             panel=makeFloatingInspector();
             menu=new BarMenu('openysm_physics',[
@@ -1507,7 +1507,7 @@
         onunload(){
             // Preserve unsaved text in its owning project even if a reload closes the window.
             if(scriptEditor){scriptEditor.preserve?.();scriptEditor.dispose();scriptEditor=undefined;}
-            Blockbench.removeListener('save_project',saveScripts);
+            Blockbench.removeListener('saved_state_changed',saveScripts);
             for(const codec of [Codecs.bedrock,Codecs.bedrock_old]){codec?.removeListener('parse',beforeGeometryImport);codec?.removeListener('parsed',afterGeometryImport);}
             scriptDraftProperty?.delete();scriptProjectProperty?.delete();scriptOwnedProperty?.delete();scriptProperty?.delete();cancelAnimationFrame(frame);
             window.removeEventListener('mousedown',pickPhysics,true);window.removeEventListener('mouseup',finishPhysicsPick,true);window.removeEventListener('blur',clearPickedGesture);

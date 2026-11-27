@@ -102,6 +102,15 @@ try {
     assert.equal(fs.readFileSync(manual,'utf8'),'// 高级脚本：保留\n');
     let entries=api.generatedGroups(fs.readFileSync(target,'utf8'));assert.equal(entries.find(([n])=>n==='cape')[1].physics.g,3);assert.equal(entries.find(([n])=>n==='other')[1].glow,true);
     const first=fs.readFileSync(target,'utf8');api.writeScripts();assert.equal(fs.readFileSync(target,'utf8'),first);
+    global.Format={id:'bedrock'};
+    Group.all[0].rysm_properties.physics={r:16,air:4,a:45};
+    for(const event of [{project:Project,saved:false},{project:{},saved:true},{model:{},options:{backup:true}}])api.saveScripts(event);
+    assert.equal(fs.readFileSync(target,'utf8'),first,'Edits, other projects and backup compilation must not write scripts');
+    const lstat=fs.lstatSync;
+    try{fs.lstatSync=undefined;api.saveScripts({project:Project,saved:true});}
+    finally{fs.lstatSync=lstat;}
+    assert.deepEqual(api.generatedGroups(fs.readFileSync(target,'utf8')).find(([n])=>n==='cape')[1].physics,{r:16,air:4,a:45},'Native model save must persist current form values');
+    Group.all[0].rysm_properties.physics={g:3};api.writeScripts();
     fs.writeFileSync(old,oldSource+'\nthrow Error("manual");');const beforeManifest=fs.readFileSync(manifest,'utf8');
     assert.throws(()=>api.writeScripts());assert.equal(fs.readFileSync(target,'utf8'),first);assert.equal(fs.readFileSync(manifest,'utf8'),beforeManifest);
     fs.unlinkSync(target);assert.throws(()=>api.writeScripts(),/手写逻辑/);assert.ok(fs.readFileSync(old,'utf8').includes('manual'));assert.equal(fs.existsSync(target),false);

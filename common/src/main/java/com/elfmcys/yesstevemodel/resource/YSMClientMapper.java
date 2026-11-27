@@ -512,7 +512,7 @@ public class YSMClientMapper {
         }
 
         var scripts=net.everla.ysmJsLib.ScriptModel.BUILDING.get();
-        boolean hasPhysics = scripts != null || rawGeo.bones.stream().anyMatch(b -> net.everla.ysmPhysLib.PhysParameters.isCandidate(b.name));
+        boolean hasPhysics = scripts != null;
         List<GeoBone> geoBones = new ArrayList<>();
         List<GeoModel.BakedBone> bakedBones = new ArrayList<>();
         Map<String, String> parentMap = new HashMap<>();
@@ -525,7 +525,7 @@ public class YSMClientMapper {
             bb.name = rb.name;
             bb.facingCamera = scripts!=null && scripts.flag(rb.name,"facingCamera");
             if(scripts!=null && scripts.flag(rb.name,"glow"))bb.glow=true;
-            String frameName=scripts==null?rb.name:scripts.encoded(rb.name,"frameAnimation","FrameAnimation");
+            String frameName=scripts==null?"":scripts.encoded(rb.name,"frameAnimation","FrameAnimation");
             if (rb.name.startsWith("ysmGlow")) bb.glow = true;
             bb.pivotX = rb.pivot[0];
             bb.pivotY = rb.pivot[1];
@@ -554,7 +554,7 @@ public class YSMClientMapper {
             }
             boolean forceCull = allCutout;
 
-            boolean item=rb.name.startsWith("ysmItem@") || scripts!=null && scripts.flag(rb.name,"item");
+            boolean item=scripts!=null && scripts.flag(rb.name,"item");
             RawYsmModel.RawFace itemFace=null;
             if(item && rb.cubes.size()==1) {
                 var faces=rb.cubes.get(0).faces.stream().filter(ItemThickness::hasUv).toList();
@@ -585,8 +585,7 @@ public class YSMClientMapper {
 
                 for (RawYsmModel.RawFace rf : rc.faces) {
                     if((item || bb.frameAnimation != null) && !ItemThickness.hasUv(rf)) continue;
-                    if (net.everla.ysmPhysLib.PhysParameters.isCollider(scripts==null?rb.name:scripts.physicsName(rb.name))
-                            && java.util.Arrays.stream(new double[]{rf.u[0],rf.u[1],rf.u[2],rf.u[3],rf.v[0],rf.v[1],rf.v[2],rf.v[3]}).allMatch(uv -> uv == -1)) continue;
+                    if (java.util.Arrays.stream(new double[]{rf.u[0],rf.u[1],rf.u[2],rf.u[3],rf.v[0],rf.v[1],rf.v[2],rf.v[3]}).allMatch(uv -> uv == -1)) continue;
                     int faceState = scanner != null ? scanner.scan(rf) : TranslucencyScanner.FLAG_VISIBLE;
                     if (bb.frameAnimation != null && scanner != null) {
                         // Scan the complete strip: a transparent first frame must not discard later frames.
@@ -720,17 +719,13 @@ public class YSMClientMapper {
             bone.outlineGroup=p.outlineGroup;
             if(parent.cosmic() || parent.outline()) bone.surfaceGroup=p.surfaceGroup;
         }
-        try { bone.style=net.everla.reimaginedysm.gpu.GroupStyle.parse(bone.name,parent); }
-        catch(IllegalArgumentException ex) {
-            bone.style=parent;
-            com.elfmcys.yesstevemodel.YesSteveModel.LOGGER.warn("[group style] {}: {}",bone.name,ex.getMessage());
-        }
+        bone.style=parent;
         var scripts=net.everla.ysmJsLib.ScriptModel.BUILDING.get();
         if(scripts!=null) {
             bone.style=scripts.style(bone.name,bone.style);
             bone.cosmicEffect=scripts.effect(bone.name,bone.parentIdx<0?"":bones.get(bone.parentIdx).cosmicEffect);
         }
-        if((scripts!=null && scripts.group(bone.name).has("outline") || bone.name.startsWith("ysmOutline")) && bone.style!=parent) bone.outlineGroup=i;
+        if(scripts!=null && scripts.group(bone.name).has("outline") && bone.style!=parent) bone.outlineGroup=i;
         if(bone.style!=parent) bone.surfaceGroup=i;
         done[i]=true;
     }

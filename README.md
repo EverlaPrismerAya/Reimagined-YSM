@@ -435,6 +435,12 @@ Forge 版可为以下饰品添加模型定位组。定位组的枢轴、旋转�
 
 星翼幻想光环按 Curios 栏位顺序选择一个。装备哈迪斯光环时优先显示哈迪斯光环。
 
+## 关于旧构建下RYSM模型的升级
+
+旧组名前缀模型请使用 `.legacy-physic-upgrade-tool` 中的工具升级为 JS 驱动。仅接受单个文件夹格式 YSM 模型，暂不支持.zip或者.ysm。
+
+模组目前已不再支持除ysmGlow这个官方版也有的修饰符以外的所有组名前缀修饰符。
+
 ## 构建
 
 构建环境使用 Java 21。编译产物以 Java 17 为目标。
@@ -446,10 +452,6 @@ Forge 版可为以下饰品添加模型定位组。定位组的枢轴、旋转�
 产物位于 `forge/build/libs/` 和 `fabric/build/libs/`。
 
 源码检查和示例生成命令见 [示例说明](examples/rysmjs/README.md#开发检查)。
-
-旧组名前缀模型请使用根目录 `.legacy-physic-upgrade-tool/upgrade.py` 的图形窗口升级为 `Rysm.model(...)` JS 驱动。仅接受单个文件夹格式 YSM 模型，输出独立副本并保留原件；不处理 ZIP、二进制 `.ysm` / `.rysm` 或旧 JS API。模组不再内置升级队列或转换器。
-
-`ysmGlow` 是官方原生前缀，迁移时保留；`FacingCamera` 及旧物理前缀转换为 JS 属性。仍支持 `event.modify(name).glow()`。游戏运行时和 BB 预览不再支持旧 `Rysm.group/molang/cosmic/update/pose/logKeyBindings` 入口；旧脚本只能先通过升级器转换。
 
 ## 来源与许可
 

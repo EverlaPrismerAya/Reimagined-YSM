@@ -136,10 +136,10 @@ public class GeoModel {
 
     public static void classifyFacingCameraBones(List<BakedBone> bones) {
         for (BakedBone bone : bones) {
-            bone.facingCameraSubtree = (bone.facingCamera || bone.name.startsWith("FacingCamera"));
+            bone.facingCameraSubtree = bone.facingCamera;
             for (int parent = bone.parentIdx; parent != -1 && !bone.facingCameraSubtree;
                  parent = bones.get(parent).parentIdx) {
-                bone.facingCameraSubtree = (bones.get(parent).facingCamera || bones.get(parent).name.startsWith("FacingCamera"));
+                bone.facingCameraSubtree = bones.get(parent).facingCamera;
             }
         }
     }
@@ -354,7 +354,6 @@ public class GeoModel {
 
     public GeoModel(GeoBone[] geoBones, String[][] strArr, boolean[] zArr, @NotNull GeometryDescription properties, boolean[] zArr2) {
         this.bones = ObjectLists.unmodifiable(ObjectArrayList.wrap(geoBones));
-        this.hasFacingCameraBones = this.bones.stream().anyMatch(bone -> bone.getName().startsWith("FacingCamera"));
         this.leftHandIds = resolveBoneIds(strArr[0]);
         this.rightHandIds = resolveBoneIds(strArr[1]);
         this.elytraIds = resolveBoneIds(strArr[2]);

@@ -52,8 +52,8 @@ public final class ScriptModel {
     public JsonObject group(String name) {return groups.getOrDefault(scope.isEmpty()?name:scope+"."+name,new JsonObject());}
     public boolean flag(String name,String key) {var p=group(name);return p.has(key)&&p.get(key).getAsBoolean();}
     public String encoded(String name,String key,String prefix) {
-        var p=group(name);if(!p.has(key))return name;
-        var value=p.get(key);if(value.isJsonPrimitive())return value.getAsBoolean()?prefix+"@script":name;
+        var p=group(name);if(!p.has(key))return "";
+        var value=p.get(key);if(value.isJsonPrimitive())return value.getAsBoolean()?prefix+"@script":"";
         var obj=value.getAsJsonObject();var entries=new ArrayList<String>();
         for(var e:obj.entrySet()) {
             if(e.getKey().equals("kind"))continue;
@@ -64,7 +64,7 @@ public final class ScriptModel {
     public String physicsName(String name) {
         var p=group(name);
         if(p.has("end")&&p.get("end").getAsBoolean())return "ysmPhysEnd@script";
-        if(p.has("collider")&&p.get("collider").getAsBoolean())return "ysmPhysC@script";
+        if(p.has("collider")&&p.get("collider").getAsBoolean())return "";
         String prefix=p.has("physics")&&p.get("physics").isJsonObject()&&p.getAsJsonObject("physics").has("kind")&&
                 p.getAsJsonObject("physics").get("kind").getAsString().equals("tail")?"ysmTail":"ysmPhys";
         return encoded(name,"physics",prefix);

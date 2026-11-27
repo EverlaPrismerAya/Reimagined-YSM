@@ -30,7 +30,7 @@ public final class PhysDefinition {
         List<GeoBone> hierarchy = new ArrayList<>();
         for (int i=0;i<imported.size();i++) {
             GeoBone original=imported.get(i);
-            GeoBone copy=new GeoBone(model.scripts==null?original.getName():model.scripts.physicsName(original.getName()),original.isHidden(),original.cubesAreHidden(),original.childBonesAreHiddenToo(),
+            GeoBone copy=new GeoBone(model.scripts==null?"":model.scripts.physicsName(original.getName()),original.isHidden(),original.cubesAreHidden(),original.childBonesAreHiddenToo(),
                     original.getPivotX(),original.getPivotY(),original.getPivotZ(),original.getRotX(),original.getRotY(),original.getRotZ());
             copy.parentIdx=model.bakedBones==null?original.parentIdx:model.bakedBones.get(i).parentIdx;
             hierarchy.add(copy);
@@ -60,7 +60,6 @@ public final class PhysDefinition {
             physical[i]=parameters[i]!=null;
             if(PhysParameters.isEnd(name)) endList.add(i);
             else if(name.startsWith("ysmPhysEnd")) uniqueWarning.accept(name+": invalid endpoint name");
-            else if(name.startsWith("ysmPhysC") && !PhysParameters.isCollider(name)) uniqueWarning.accept(name+": expected ysmPhysC@name");
         }
         for(int i=0;i<size;i++) {
             int cursor=i;
@@ -95,7 +94,7 @@ public final class PhysDefinition {
             affected[i]=jointByBone[i]!=null || parent>=0 && affected[parent];
         }
         ends=endList.stream().mapToInt(Integer::intValue).toArray();
-        if(!joints.isEmpty() && model.bakedBones!=null) for(int i=0;i<size;i++) if(!excluded[i] && PhysParameters.isCollider(bones.get(i).getName())) {
+        if(!joints.isEmpty() && model.bakedBones!=null && model.scripts!=null) for(int i=0;i<size;i++) if(!excluded[i] && model.scripts.flag(imported.get(i).getName(),"collider")) {
             for(float[] faces:model.bakedBones.get(i).physicsFaces) cubes.add(new Cube(i,faces));
         }
         this.joints=List.copyOf(joints);

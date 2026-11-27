@@ -624,7 +624,9 @@ public class YSMFolderDeserializer implements AutoCloseable {
                         }
                         // Collision volumes exist independently of UV faces. Preserve missing
                         // faces in the existing raw/wire geometry with a reserved invisible UV.
-                        if (net.everla.ysmPhysLib.PhysParameters.isCollider(bone.name)) {
+                        // Script collider roles are resolved on the client, after this bake.
+                        // Keep untextured boxes available for those later declarations too.
+                        if (cube.faces.isEmpty()) {
                             String[] sides={"north","south","east","west","up","down"};
                             Vector3f[] normals={new Vector3f(0,0,-1),new Vector3f(0,0,1),new Vector3f(1,0,0),new Vector3f(-1,0,0),new Vector3f(0,1,0),new Vector3f(0,-1,0)};
                             JsonObject absent=new JsonObject();
@@ -1100,8 +1102,7 @@ public class YSMFolderDeserializer implements AutoCloseable {
     private String calculateFinalFolderHash() {
         try {
             MessageDigest digest = MessageDigest.getInstance("MD5");
-            if (model.mainEntity.mainModel != null && model.mainEntity.mainModel.bones.stream()
-                    .anyMatch(b -> net.everla.ysmPhysLib.PhysParameters.isCollider(b.name))) {
+            {
                 // Give regenerated solid collision geometry its own server/client payload
                 // identity. Otherwise valid old encrypted payloads win after catalog rebuild.
                 digest.update(net.everla.ysmPhysLib.PhysParameters.GEOMETRY_CACHE_KEY.getBytes(StandardCharsets.UTF_8));
