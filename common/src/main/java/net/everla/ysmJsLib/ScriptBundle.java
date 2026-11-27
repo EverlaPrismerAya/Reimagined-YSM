@@ -60,7 +60,35 @@ public final class ScriptBundle {
                 files.put(root.relativize(p).toString().replace('\\','/'),Files.readAllBytes(p));
             }
         }
+        // Persist file-name scopes in the companion: binary geometry has no source filename.
+        var scopes=new JsonObject();scopes.addProperty("player.main","");scopes.addProperty("player.arm","arm");
+        Path config=root.resolve("ysm.json");
+        if(Files.isRegularFile(config)) {
+            var tree=JsonParser.parseString(Files.readString(config)).getAsJsonObject();
+            if(tree.has("files")) {
+                var modelFiles=tree.getAsJsonObject("files");
+                if(modelFiles.has("player")) {
+                    var player=modelFiles.getAsJsonObject("player");
+                    if(player.has("model")&&player.getAsJsonObject("model").has("arm"))scopes.addProperty("player.arm",modelFileName(player.getAsJsonObject("model").get("arm").getAsString()));
+                }
+                for(String section:List.of("projectiles","vehicles"))if(modelFiles.has(section)) {
+                    var entries=modelFiles.get(section);int index=0;
+                    Collection<JsonElement> children=entries.isJsonArray()?entries.getAsJsonArray().asList():entries.getAsJsonObject().asMap().values();
+                    for(var child:children)if(child.isJsonObject()) {
+                        if(child.getAsJsonObject().has("model"))scopes.addProperty(section+"."+index,modelFileName(child.getAsJsonObject().get("model").getAsString()));
+                        index++;
+                    }
+                }
+            }
+        }else scopes.addProperty("projectiles.0","arrow");
+        files.put("rysm/model-scopes.json",scopes.toString().getBytes(StandardCharsets.UTF_8));
         return new ScriptBundle(files);
+    }
+    private static String modelFileName(String path) {
+        String name=path.replace('\\','/');name=name.substring(name.lastIndexOf('/')+1);
+        if(name.endsWith(".json"))name=name.substring(0,name.length()-5);
+        if(name.isBlank()||name.contains("..")||name.contains(":"))throw new IllegalArgumentException("Invalid model filename: "+path);
+        return name;
     }
     public static ScriptBundle read(byte[] archive) throws IOException {
         if(archive.length>MAX_BYTES)throw new IOException("RYSM archive too large");

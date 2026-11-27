@@ -9,7 +9,7 @@ import net.everla.reimaginedysm.security.*;
 public final class ScriptChecks {
     private static void check(boolean value,String message){if(!value)throw new AssertionError(message);}
     private static ScriptBundle bundle(String js) throws Exception {
-        return new ScriptBundle(Map.of("rysm/manifest.json","{\"version\":1,\"scripts\":[\"scripts/main.js\"]}".getBytes(StandardCharsets.UTF_8),"rysm/scripts/main.js",js.getBytes(StandardCharsets.UTF_8)));
+        return new ScriptBundle(Map.of("rysm/manifest.json","{\"version\":1,\"scripts\":[\"scripts/main.js\"]}".getBytes(StandardCharsets.UTF_8),"rysm/scripts/main.js",ScriptSyntaxMigration.convert(js).getBytes(StandardCharsets.UTF_8)));
     }
     public static void main(String[] args) throws Exception {
         var bundle=bundle("Rysm.group('cape',{physics:{g:9.8}}); Rysm.molang('sum',(game,a,b)=>a+b,{fallback:7}); Rysm.molang('isolated',game=>{game.model.state.n=(game.model.state.n||0)+1;return game.model.state.n;}); Rysm.molang('permissions',game=>typeof java==='undefined' && typeof Packages==='undefined'); Rysm.molang('loop',game=>{while(true){}},{fallback:9});");
@@ -42,15 +42,33 @@ public final class ScriptChecks {
         try {new ScriptBundle(Map.of("rysm/../escape",new byte[0]));throw new AssertionError("Traversal accepted");}catch(java.io.IOException expected){}
         check(ScriptResources.replaceCalls("2+rysmjs.sum(rysmjs.x(), 3)",Map.of("sum",7.0)).equals("2+(7.0)"),"Nested call downgrade");
         check(ScriptResources.replaceCalls("'rysmjs.sum()'",Map.of()).equals("'rysmjs.sum()'"),"String literal unchanged");
-        check(ScriptMigration.properties("ysmPhys#g=2,enable=(walk,run)@cape").getAsJsonObject("physics").get("enable").getAsString().equals("(walk,run)"),"Migration parameter nesting");
-        check(ScriptMigration.properties("ysmItem@paper").get("item").getAsBoolean(),"Item migration coverage");
+        for(String old:List.of("group","molang","cosmic","update","pose","logKeyBindings")) {
+            var obsolete=new ScriptBundle(Map.of("rysm/manifest.json","{\"version\":1,\"scripts\":[\"scripts/main.js\"]}".getBytes(StandardCharsets.UTF_8),"rysm/scripts/main.js",("Rysm."+old+"();").getBytes(StandardCharsets.UTF_8)));
+            try {new ScriptRuntime(obsolete);throw new AssertionError("Old API accepted: "+old);}catch(RuntimeException expected){}
+        }
+        attributes();
         modelEvents();
         fluentGroups();
+        modelScopes();
         synchronization();
         functionFallbacks();
-        if(args.length>0 && !args[0].startsWith("--")){examples(Path.of(args[0]));migration(Path.of(args[0]));}
+        if(args.length>0 && !args[0].startsWith("--")){examples(Path.of(args[0]));}
         if(Arrays.asList(args).contains("--gpu"))gpu();
         System.out.println("RYSM script checks passed");
+    }
+    private static void attributes() throws Exception {
+        var runtime=new ScriptRuntime(bundle("""
+            Rysm.model('molang',event=>{
+              event.register('current',game=>game.entity.attribute('example:generic.player_flying_speed',0.1));
+              event.register('base',game=>game.entity.attributeBase('example:generic.player_flying_speed',0.05));
+              event.register('default_value',game=>game.entity.attribute('minecraft:generic.movement_speed'));
+              event.register('invalid_fallback',game=>game.entity.attribute('example:generic.player_flying_speed',NaN),{fallback:7});
+            });
+            """));
+        for(var entry:Map.of("current",0.1,"base",0.05,"default_value",0.0,"invalid_fallback",7.0).entrySet()) {
+            double value=runtime.evaluate(entry.getKey(),new Object[0],cx->runtime.snapshot(Map.of("entity",runtime.snapshot(Map.of(),view->ScriptAttributes.bind(runtime,view,null)))));
+            check(value==entry.getValue(),"Attribute bridge fallback: "+entry.getKey());
+        }
     }
     private static void modelEvents() throws Exception {
         String source="// preserve this header\nRysm.logKeyBindings();Rysm.cosmic('crosses',{textures:['cross.png']});Rysm.update(game=>{game.model.state.ticks=(game.model.state.ticks||0)+1;});Rysm.molang('counter',game=>game.model.state.ticks||0,{fallback:0,sync:true});Rysm.molang('sum',(game,a,b)=>a+b,{fallback:7});Rysm.pose(game=>{game.model.state.posed=true;});";
@@ -98,6 +116,33 @@ public final class ScriptChecks {
         var closed=new ScriptRuntime(bundle("let saved;Rysm.model('group_modifier',event=>{saved=event.modify('sky');});Rysm.molang('late',game=>{saved.glow();return 1;},{fallback:7});"));
         check(closed.evaluate("late",new Object[0],cx->closed.snapshot(Map.of()))==7&&!closed.groups.get("sky").has("glow"),"Builders cannot modify registrations after loading");
         try{new ScriptModel(bundle("Rysm.model('group_modifier',event=>event.modify('bad').physics({}).end());"));throw new AssertionError("Conflicting physics roles accepted");}catch(IllegalArgumentException expected){}
+    }
+    private static void modelScopes() throws Exception {
+        Path root=Files.createTempDirectory("rysm-model-scopes-");
+        try {
+            Files.createDirectories(root.resolve("rysm/scripts"));
+            Files.writeString(root.resolve("ysm.json"),"""
+                {"files":{"player":{"model":{"main":"models/body.json","arm":"models/hands.json"}},"projectiles":[{"model":"models/trident.json"},{"model":"models/arrow.json"}],"vehicles":{"example:boat":{"model":"models/boat.json"}}}}
+                """);
+            Files.writeString(root.resolve("rysm/manifest.json"),"{\"version\":1,\"scripts\":[\"scripts/main.js\"]}");
+            Files.writeString(root.resolve("rysm/scripts/main.js"),"""
+                Rysm.model('group_modifier', e=>{
+                  e.modify('Bow').glow();
+                  e.modify('arrow.Bow').facingCamera().physics({g:2});
+                  e.modify('arrow.tip').end();
+                  e.modify('hands.Bow').outline({color:'33AAFF',width:3});
+                  e.modify('boat.Bow').collider();
+                });
+                """);
+            var bundle=ScriptBundle.read(ScriptBundle.directory(root).archive());
+            ScriptModel shared=new ScriptModel(bundle),main=shared.forModel("player.main"),arrow=shared.forModel("projectiles.1"),hands=shared.forModel("player.arm"),boat=shared.forModel("vehicles.0");
+            check(main.flag("Bow","glow")&&!main.flag("Bow","facingCamera"),"Main scope isolation");
+            check(arrow.scope.equals("arrow")&&arrow.flag("Bow","facingCamera")&&!arrow.flag("Bow","glow"),"Arrow filename scope survives archive");
+            check(arrow.physicsName("Bow").contains("g=2")&&arrow.physicsName("tip").startsWith("ysmPhysEnd"),"Scoped bone chain declarations");
+            check(hands.group("Bow").getAsJsonObject("outline").get("width").getAsInt()==3&&boat.flag("Bow","collider"),"Custom arm filename and vehicle scope");
+            check(arrow.localGroupName("arrow.Bow").equals("Bow")&&arrow.localGroupName("Bow")==null&&main.localGroupName("arrow.Bow")==null,"Pose target namespace isolation");
+            check(shared.forModel("projectiles.0").group("Bow").size()==0,"Other projectile isolation");
+        }finally{try(var paths=Files.walk(root)){for(var path:paths.sorted(Comparator.reverseOrder()).toList())Files.delete(path);}}
     }
     private static void functionFallbacks() throws Exception {
         var raw=new com.elfmcys.yesstevemodel.resource.pojo.RawYsmModel();raw.properties.sha256="f".repeat(64);
@@ -156,7 +201,8 @@ public final class ScriptChecks {
                 var features=new HashSet<String>();scriptModel.groups.values().forEach(p->features.addAll(p.keySet()));
                 check(features.containsAll(Set.of("physics","end","collider","glow","item","facingCamera","cosmic","outline","frameAnimation")),"Example misses a group feature");
                 check(scriptModel.group("tail").getAsJsonObject("physics").get("kind").getAsString().equals("tail"),"Example misses tail physics");
-                check(ScriptDeclarations.read(raw.rysmBundle).values().stream().filter(d->d.sync()).count()==5,"Example misses input synchronization");
+                var declarations=ScriptDeclarations.read(raw.rysmBundle);
+                check(Set.of("escape_toggle","inventory","backpack","mouse","releases","player_flying_speed","flying_speed_multiplier","flight_ready","smooth_flying_speed").stream().allMatch(name->declarations.containsKey(name)&&declarations.get(name).sync()),"Example misses synchronized inputs or entity algorithms");
                 check(new Gson().toJson(raw).contains("rysmjs."),"Custom expressions were not restored");
                 var side=ScriptBundle.read(Files.readAllBytes(root.resolve("export/rysmjs-all-features.rysm")));
                 check(side.manifest().get("modelSha256").getAsString().equals(com.elfmcys.yesstevemodel.util.DigestUtil.sha256Hex(encrypted)),"Export model binding");
@@ -173,100 +219,6 @@ public final class ScriptChecks {
             try{ScriptExports.writePair(file,new byte[]{1,2,3},scripts);throw new AssertionError("Invalid base archive accepted");}catch(Exception expected){}
             check(Files.readString(file).equals("original-model")&&Files.readString(side).equals("original-script"),"Invalid export changed previous pair");
         }finally{try(var files=Files.walk(root)){for(Path p:files.sorted(Comparator.reverseOrder()).toList())Files.delete(p);}}
-    }
-    private static void migration(Path examples) throws Exception {
-        Path temp=Files.createTempDirectory("rysmjs-migration-");
-        try {
-            Path source=examples.resolve("source/all-features");
-            try(var files=Files.walk(source)){for(Path file:files.toList()) {
-                if(source.relativize(file).startsWith("rysm"))continue;Path dest=temp.resolve(source.relativize(file));
-                if(Files.isDirectory(file))Files.createDirectories(dest);else Files.copy(file,dest);
-            }}
-            // These asset names also match the legacy root heuristic; never descend into a recognized model.
-            Files.writeString(temp.resolve("models/arm.json"),"{\"minecraft:geometry\":[{\"bones\":[]}]}");
-            Path geometry=temp.resolve("models/main.json");String original=Files.readString(geometry).replace("\"cape\"","\"ysmPhys#g=2@cape\"").replace("\"cape_end\"","\"ysmPhysEnd@cape_end\"");Files.writeString(geometry,original);
-            try(var reader=new YSMFolderDeserializer(temp)) {
-                var raw=reader.deserialize();check(raw.rysmBundle==null,"Unmarked source model entered RYSM migration");
-                check(raw.mainEntity.mainModel.bones.stream().anyMatch(b->b.name.startsWith("ysmPhys")),"Unmarked source model was renamed");
-            }
-            check(Files.readString(geometry).equals(original)&&!Files.exists(temp.resolve("rysm")),"Unmarked source model was modified");
-            Path archive=Files.createTempFile("rysm-zip-migration-",".zip");Files.delete(archive);
-            try {
-                try(var zip=FileSystems.newFileSystem(java.net.URI.create("jar:"+archive.toUri()),Map.of("create","true"))) {
-                    try(var files=Files.walk(temp)){for(Path file:files.toList()) {
-                        Path target=zip.getPath("/").resolve(temp.relativize(file).toString().replace('\\','/'));
-                        if(Files.isDirectory(file))Files.createDirectories(target);else Files.copy(file,target);
-                    }}
-                    try(var reader=new YSMFolderDeserializer(zip.getPath("/"))) {
-                        var raw=reader.deserialize();check(raw.rysmBundle==null,"Unmarked ZIP model entered RYSM migration");
-                        check(raw.mainEntity.mainModel.bones.stream().anyMatch(b->b.name.startsWith("ysmPhys")),"Unmarked ZIP was renamed");
-                    }
-                    check(!Files.exists(zip.getPath("/rysm")),"Unmarked ZIP was modified");
-                    Files.createDirectory(zip.getPath("/rysm"));
-                    check(ScriptMigration.migrate(zip.getPath("/")),"Explicit ZIP migration failed");
-                    try(var reader=new YSMFolderDeserializer(zip.getPath("/"))) {
-                        var raw=reader.deserialize();check(raw.rysmBundle!=null,"Marked ZIP migration failed across filesystem providers");
-                        check(raw.mainEntity.mainModel.bones.stream().anyMatch(b->b.name.equals("cape")),"ZIP migration did not rename bone");
-                    }
-                }
-            }finally{Files.deleteIfExists(archive);}
-            Path queue=Files.createTempDirectory("rysm-upgrade-check-");
-            try {
-                Path inbox=queue.resolve("rysm_upgrade"),custom=queue.resolve("custom");Files.createDirectories(inbox);
-                Path input=inbox.resolve("legacy");
-                try(var files=Files.walk(temp)){for(Path f:files.toList()) {
-                    Path d=input.resolve(temp.relativize(f));if(Files.isDirectory(f))Files.createDirectories(d);else Files.copy(f,d);
-                }}
-                Files.createDirectories(input.resolve("rysm/scripts"));
-                Files.writeString(input.resolve("rysm/manifest.json"),"{\"version\":1,\"scripts\":[\"scripts/main.js\"]}");
-                Files.writeString(input.resolve("rysm/scripts/main.js"),"Rysm.group('cape',{glow:true});");
-                ScriptUpgrade.process(inbox,custom);
-                check(Files.readString(custom.resolve("legacy/rysm/scripts/main.js")).contains("Rysm.model("),"Folder inbox did not convert old JS");
-                check(!Files.exists(input)&&Files.exists(custom.resolve("legacy/rysm/manifest.json")),"Folder inbox upgrade failed");
-                try(var backups=Files.list(queue.resolve("rysm-backups"))){check(Files.readString(backups.findFirst().orElseThrow().resolve("rysm/scripts/main.js")).equals("Rysm.group('cape',{glow:true});"),"Original JS backup missing or changed");}
-                Files.createDirectory(input);Files.writeString(input.resolve("keep.txt"),"keep");
-                ScriptUpgrade.process(inbox,custom);check(Files.exists(input.resolve("keep.txt")),"Collision removed input");
-                Path invalid=inbox.resolve("invalid-js");
-                try(var files=Files.walk(custom.resolve("legacy"))){for(Path f:files.toList()) {
-                    Path d=invalid.resolve(custom.resolve("legacy").relativize(f));if(Files.isDirectory(f))Files.createDirectories(d);else Files.copy(f,d);
-                }}
-                String invalidJs="Rysm.group('cape',{unknown:true});";
-                Files.writeString(invalid.resolve("rysm/scripts/main.js"),invalidJs);
-                ScriptUpgrade.process(inbox,custom);
-                check(Files.readString(invalid.resolve("rysm/scripts/main.js")).equals(invalidJs)&&!Files.exists(custom.resolve("invalid-js")),"Invalid JS changed or published");
-                Path bad=inbox.resolve("bad.zip");Files.writeString(bad,"invalid archive");
-                ScriptUpgrade.process(inbox,custom);check(Files.exists(bad)&&!Files.exists(custom.resolve("bad.zip")),"Invalid ZIP was published");
-                Path zipped=inbox.resolve("legacy.zip");
-                try(var zip=FileSystems.newFileSystem(java.net.URI.create("jar:"+zipped.toUri()),Map.of("create","true"))) {
-                    try(var files=Files.walk(temp)){for(Path f:files.toList()) {
-                        Path d=zip.getPath("/").resolve(temp.relativize(f).toString().replace('\\','/'));
-                        if(Files.isDirectory(f))Files.createDirectories(d);else Files.copy(f,d);
-                    }}
-                }
-                try(var zip=FileSystems.newFileSystem(zipped)) {
-                    Files.createDirectories(zip.getPath("/rysm/scripts"));
-                    Files.writeString(zip.getPath("/rysm/manifest.json"),"{\"version\":1,\"scripts\":[\"scripts/main.js\"]}");
-                    Files.writeString(zip.getPath("/rysm/scripts/main.js"),"Rysm.group('cape',{glow:true});");
-                }
-                ScriptUpgrade.process(inbox,custom);
-                check(!Files.exists(zipped)&&Files.exists(custom.resolve("legacy.zip")),"ZIP inbox upgrade failed");
-                try(var zip=FileSystems.newFileSystem(custom.resolve("legacy.zip"))) {
-                    check(Files.exists(zip.getPath("/rysm/manifest.json"))&&Files.readString(zip.getPath("/rysm/scripts/main.js")).contains("Rysm.model("),"ZIP output lacks converted script");
-                }
-            }finally {try(var files=Files.walk(queue)){for(Path p:files.sorted(Comparator.reverseOrder()).toList())Files.delete(p);}}
-            Files.createDirectory(temp.resolve("rysm"));
-            try(var reader=new YSMFolderDeserializer(temp)) {
-                check(reader.deserialize().rysmBundle==null,"Normal loading triggered legacy migration");
-            }
-            check(ScriptMigration.migrate(temp),"Explicit migration failed");
-            try(var reader=new YSMFolderDeserializer(temp)) {
-                var raw=reader.deserialize();check(raw.rysmBundle!=null,"Migration generated script bundle");
-                check(raw.mainEntity.mainModel.bones.stream().anyMatch(b->b.name.equals("cape")),"Migration removed prefix");
-                check(raw.mainEntity.mainModel.bones.stream().noneMatch(b->b.name.startsWith("ysmPhys")),"Migration left old names");
-                var model=new ScriptModel(raw.rysmBundle);check(model.groups.containsKey("cape"),"Migration lost group properties");
-            }
-            String once=Files.readString(geometry);check(ScriptMigration.migrate(temp)&&Files.readString(geometry).equals(once),"Migration is not idempotent");
-        }finally {try(var files=Files.walk(temp)){for(Path p:files.sorted(Comparator.reverseOrder()).toList())Files.delete(p);}}
     }
     private static void gpu() throws Exception {
         if(!org.lwjgl.glfw.GLFW.glfwInit())throw new AssertionError("GLFW init");

@@ -101,7 +101,7 @@ public final class ScriptInstance {
                 if(printed++<16)mc.gui.getChat().addMessage(net.minecraft.network.chat.Component.literal(message));
             }
         });
-        ScriptableObject.putProperty(out,"entity",runtime.snapshot(entity));ScriptableObject.putProperty(out,"input",input);
+        ScriptableObject.putProperty(out,"entity",runtime.snapshot(entity,view->ScriptAttributes.bind(runtime,view,e instanceof LivingEntity living?living:null)));ScriptableObject.putProperty(out,"input",input);
         ScriptableObject.putProperty(out,"time",runtime.snapshot(Map.of("ticks",ticks,"seconds",ticks/20)));
         ScriptableObject.putProperty(out,"camera",runtime.snapshot(Map.of("yaw",camera.getYRot(),"pitch",camera.getXRot())));
         runtime.define(out,"molang",args->{
@@ -114,13 +114,16 @@ public final class ScriptInstance {
         });
         runtime.define(out,"group",args->{
             if(!pose)throw new IllegalArgumentException("Group transforms are only available in Rysm.model('pose', callback)");
-            IBone bone=model.bones().get(StringPool.computeIfAbsent(Context.toString(args[0])));
-            if(bone==null)throw new IllegalArgumentException("Unknown group: "+Context.toString(args[0]));
+            if(args.length!=1)throw new IllegalArgumentException("Expected one qualified group name");
+            String target=Context.toString(args[0]),localName=model.getGeoModel().scripts.localGroupName(target);
+            IBone bone=localName==null?null:model.bones().get(StringPool.computeIfAbsent(localName));
+            if(localName!=null&&bone==null)throw new IllegalArgumentException("Unknown group: "+target);
             var group=runtime.object(Context.getCurrentContext());
             for(String op:List.of("move","rotate","scale"))runtime.define(group,op,values->{
                 if(values.length!=3)throw new IllegalArgumentException("Expected x, y, z");
                 float x=(float)ScriptRuntime.finite(values[0]),y=(float)ScriptRuntime.finite(values[1]),z=(float)ScriptRuntime.finite(values[2]);
                 if(!Float.isFinite(x)||!Float.isFinite(y)||!Float.isFinite(z))throw new IllegalArgumentException("Transform overflow");
+                if(bone==null)return group;
                 saved.computeIfAbsent(bone,b->new float[]{b.getPositionX(),b.getPositionY(),b.getPositionZ(),b.getRotationX(),b.getRotationY(),b.getRotationZ(),b.getScaleX(),b.getScaleY(),b.getScaleZ()});
                 switch(op) {
                     case "move"->{bone.setPositionX(bone.getPositionX()+x);bone.setPositionY(bone.getPositionY()+y);bone.setPositionZ(bone.getPositionZ()+z);}

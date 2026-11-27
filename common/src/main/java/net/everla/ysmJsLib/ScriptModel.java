@@ -8,11 +8,19 @@ import java.util.*;
 public final class ScriptModel {
     public static final ThreadLocal<ScriptModel> BUILDING=new ThreadLocal<>();
     public final ScriptBundle bundle;
+    public final String scope;
+    private final JsonObject scopes;
     public final boolean logKeyBindingsRequested;
     public final Map<String,JsonObject> groups,cosmic;
     public final Map<String,ScriptDeclarations.Entry> declarations;
     public ScriptModel(ScriptBundle bundle) {
-        this.bundle=bundle;var runtime=new ScriptRuntime(bundle);
+        this.bundle=bundle;scope="";
+        scopes=bundle.files.containsKey("rysm/model-scopes.json")?JsonParser.parseString(bundle.text("rysm/model-scopes.json")).getAsJsonObject():new JsonObject();
+        for(var value:scopes.entrySet()) {
+            String name=value.getValue().getAsString();
+            if(name.length()>256||name.contains("/")||name.contains("\\")||name.contains(".."))throw new IllegalArgumentException("Invalid model scope");
+        }
+        var runtime=new ScriptRuntime(bundle);
         declarations=ScriptDeclarations.read(bundle);
         logKeyBindingsRequested=runtime.logKeyBindingsRequested;
         groups=Map.copyOf(runtime.groups);cosmic=Map.copyOf(runtime.cosmic);
@@ -27,7 +35,21 @@ public final class ScriptModel {
             String frame=encoded(name,"frameAnimation","FrameAnimation");if(frame.startsWith("FrameAnimation"))net.everla.reimaginedysm.gpu.FrameAnimation.parse(frame);
         }
     }
-    public JsonObject group(String name) {return groups.getOrDefault(name,new JsonObject());}
+    private ScriptModel(ScriptModel source,String scope) {
+        bundle=source.bundle;groups=source.groups;cosmic=source.cosmic;declarations=source.declarations;
+        logKeyBindingsRequested=source.logKeyBindingsRequested;scopes=source.scopes;this.scope=scope;
+    }
+    public ScriptModel forModel(String role) {
+        String prefix=role.equals("player.main")?"":scopes.has(role)?scopes.get(role).getAsString():role.equals("player.arm")?"arm":role;
+        return new ScriptModel(this,prefix);
+    }
+    /** Out-of-scope pose targets are ignored while the same callback visits another mesh. */
+    public String localGroupName(String target) {
+        if(!scope.isEmpty())return target.startsWith(scope+".")?target.substring(scope.length()+1):null;
+        for(var value:scopes.entrySet()) {String prefix=value.getValue().getAsString();if(!prefix.isEmpty()&&target.startsWith(prefix+"."))return null;}
+        return target;
+    }
+    public JsonObject group(String name) {return groups.getOrDefault(scope.isEmpty()?name:scope+"."+name,new JsonObject());}
     public boolean flag(String name,String key) {var p=group(name);return p.has(key)&&p.get(key).getAsBoolean();}
     public String encoded(String name,String key,String prefix) {
         var p=group(name);if(!p.has(key))return name;

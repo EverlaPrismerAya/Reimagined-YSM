@@ -22,15 +22,17 @@ Reimagined YSM 仅维护简体中文（zh_cn）和英语（en_us）两种语言�
 
 ### 模型按需传输
 
-默认情况下联机时先同步模型名称、哈希、分类和搜索所需的轻量目录。仅显示对应页模型的预览图，点击相应模型后触发加载。加载完成后将使用此模型YSM原生的动态模型预览。
+默认情况下联机时先同步模型名称、哈希、分类和搜索所需的轻量目录。仅显示对应页模型的预览图，点击相应模型后触发加载。 加载完成后将使用此模型YSM原生的动态模型预览。
 
 分为土豆、按页、全量三档。土豆为上述，按页为仅传输玩家可见的模型，全量则为原版YSM的同步模型库全部模型。
 
-服务端 `config/yes_steve_model-common.toml` 的 `[server_scheduler] BandwidthLimit` 控制每位玩家的模型下载速率，默认 `36` Mbps（4.5 MB/s，相当于基本上没有限速），范围 `1–999`。可通过管理员服务端配置面板调整，即时生效。每位玩家独立计速，同一玩家的并发模型请求共享额度。
+服务端 `config/yes_steve_model-common.toml` 的 `[server_scheduler] BandwidthLimit` 控制每位玩家的模型下载速率。
+
+默认 `36` Mbps（4.5 MB/s，相当于基本上没有限速），范围 `1–999`。可通过管理员服务端配置面板调整，即时生效。
 
 ### 纯客户端模型
 
-把模型文件夹（包含 `ysm.json`）、`.ysm` 或 `.zip` 放入 `config/yes_steve_model/client/`，例如 `client/my_model/ysm.json`。进入世界时独立扫描，在选择列表中以 `client/…` 名称显示。这些模型在多人模式下仅自己可见。
+把模型文件夹（包含 `ysm.json`）、`.ysm` 或 `.zip` 放入 `config/yes_steve_model/client/`即可使用，例如 `client/my_model/ysm.json`。这些模型在多人模式下仅自己可见。
 
 可在配置启用纯客户端模式，启用后本地的一切模型均将在客户端模式下运行。
 
@@ -80,7 +82,7 @@ config/yes_steve_model/custom/my_model/
 
 进入世界后，在模型选择界面选择模型。启用「强制纯客户端模式」后，本地模型按个人模型使用。
 
-## 用 JS 设置模型
+## 用 RYSMJS 设置模型
 
 在 Blockbench 中使用普通组名，例如 `cape`、`ornament` 和 `panel`。在脚本中按组名设置效果。
 
@@ -302,6 +304,35 @@ Molang 注册名称使用小写字母、数字和下划线，并以字母或下�
 
 `fallback` 是算法出错或远端同步值尚未到达时使用的数值。`sync: true` 用于让其他玩家看到相同的按键动画。服务器通过 `rysmJsSyncEnabled` 设置是否转发同步值，默认开启。
 
+### 读取玩家属性
+
+| 方法 | 返回值 | 属性缺失时 |
+| --- | --- | --- |
+| `game.entity.attribute(id, fallback)` | 包含修饰器的当前属性值 | 返回 `fallback`，默认 `0` |
+| `game.entity.attributeBase(id, fallback)` | 属性基础值 | 返回 `fallback`，默认 `0` |
+
+属性 ID 使用 `模组ID:属性名`。例如，模组 `example` 注册的 `generic.player_flying_speed` 写为 `example:generic.player_flying_speed`。接口读取模型所属玩家的客户端属性值。
+
+```js
+Rysm.model('molang', event => {
+  // 动画中使用 rysmjs.flying_speed。
+  event.register('flying_speed', game => {
+    return game.entity.attribute('example:generic.player_flying_speed', 0);
+  }, {fallback: 0, sync: true});
+
+  // 计算当前值相对基础值的倍率。
+  event.register('flying_multiplier', game => {
+    const current = game.entity.attribute('example:generic.player_flying_speed', 0);
+    const base = game.entity.attributeBase('example:generic.player_flying_speed', 0);
+    return base > 0 ? current / base : 0;
+  }, {fallback: 0, sync: true});
+});
+```
+
+属性查询的 `fallback` 用于属性未注册或玩家没有该属性的情况。注册选项中的 `fallback` 用于算法执行错误或同步值尚未到达的情况。`sync: true` 将本机算法的数值结果传给其他玩家。
+
+带参数的阈值判断、生命值组合条件和速度平滑见 [advanced.js](examples/rysmjs/source/all-features/rysm/scripts/advanced.js)。其中的属性 ID 需要替换为实际模组的值。按 F10 可将当前值和基础值输出到聊天栏。
+
 ### 在聊天栏输出信息
 
 使用 `game.print(...)` 输出文字、数字、布尔值、数组或对象。多个值用空格分隔，对象按 JSON 输出。消息显示在模型所属本机玩家的聊天栏。每个模型实例每 tick 最多输出 16 条，每条最多 4096 个字符。
@@ -347,6 +378,7 @@ Rysm.model('tick', game => {
 | `game.entity.yaw` / `pitch` | 实体水平角 / 俯仰角，单位度 |
 | `game.entity.pose` | 姿态名称，例如 `'standing'` |
 | `game.entity.local` | 是否为本机玩家 |
+| `game.entity.attribute(id, fallback)` / `attributeBase(id, fallback)` | 读取当前属性值 / 基础值 |
 | `game.camera.yaw` / `pitch` | 摄像机水平角 / 俯仰角，单位度 |
 | `game.time.ticks` / `seconds` | 实体存活时间，包含动画插值 |
 | `game.model.state` | 当前模型实例保存的数据 |
@@ -372,14 +404,15 @@ game.input.binding('key.inventory').pressed;
 
 ## 使用 Blockbench
 
-安装 [分组编辑器](blockbench/README.md)，在模型中选择组，再打开「编辑脚本组属性」。保存后，插件将组效果写入 `rysm/scripts/blockbench.js`。
+安装 [分组编辑器](blockbench/README.md)，在模型中选择组，再打开「编辑组属性」。保存后，插件将组效果写入带中英双语覆盖提示的 `rysm/scripts/generated.blockbench.js`。 选中物理骨或末端可打开整链表单，逐节编辑或批量设置全部物理参数；主页可新建脚本并使用补全和 RGB 选色。非主模型用文件名限定组名，例如 `models/arrow.json` 的 `Bow` 对应 `arrow.Bow`。
 
-使用「JavaScript 编辑与预览」编写算法、模拟按键，并查看姿态和星空效果。完整操作见 [Blockbench 使用说明](blockbench/README.md)。
+使用内置「JavaScript 编辑器」编写独立脚本，支持补全、逐行诊断、语法高亮与 RGB 颜色选择。编辑模式仅提供可开关的静态物理骨链与碰撞体积辅助。完整操作见 [Blockbench 使用说明](blockbench/README.md)。
 
 带中文注释的脚本位于 [示例模型](examples/rysmjs/README.md)：
 
 - [effects.js](examples/rysmjs/source/all-features/rysm/scripts/effects.js)：星空、物理和同组效果叠加。
 - [algorithms.js](examples/rysmjs/source/all-features/rysm/scripts/algorithms.js)：血量、帧宏和多人同步。
+- [advanced.js](examples/rysmjs/source/all-features/rysm/scripts/advanced.js)：模组属性、属性倍率、组合条件和数值平滑。
 - [events.js](examples/rysmjs/source/all-features/rysm/scripts/events.js)：加载日志、按键开关和姿态。
 
 
@@ -414,7 +447,9 @@ Forge 版可为以下饰品添加模型定位组。定位组的枢轴、旋转�
 
 源码检查和示例生成命令见 [示例说明](examples/rysmjs/README.md#开发检查)。
 
-旧 JS 转换工具仅在开发环境提供，用于迁移开发阶段的脚本。
+旧组名前缀模型请使用根目录 `.legacy-physic-upgrade-tool/upgrade.py` 的图形窗口升级为 `Rysm.model(...)` JS 驱动。仅接受单个文件夹格式 YSM 模型，输出独立副本并保留原件；不处理 ZIP、二进制 `.ysm` / `.rysm` 或旧 JS API。模组不再内置升级队列或转换器。
+
+`ysmGlow` 是官方原生前缀，迁移时保留；`FacingCamera` 及旧物理前缀转换为 JS 属性。仍支持 `event.modify(name).glow()`。游戏运行时和 BB 预览不再支持旧 `Rysm.group/molang/cosmic/update/pose/logKeyBindings` 入口；旧脚本只能先通过升级器转换。
 
 ## 来源与许可
 

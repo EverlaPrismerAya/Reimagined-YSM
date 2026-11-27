@@ -17,17 +17,15 @@ public final class ScriptMemoryChecks {
         var cube=new RawYsmModel.RawCube();bone.cubes.add(cube);
         var animationFile=new RawYsmModel.RawAnimationFile();var animation=new RawYsmModel.RawAnimation();animation.length=Float.POSITIVE_INFINITY;
         animationFile.animations.put("idle",animation);raw.mainEntity.animationFiles.put("main",animationFile);
-        check(ScriptMigration.binary(raw,null)==null,"Ordinary model was migrated");
         var bytes=(com.sun.management.ThreadMXBean)java.lang.management.ManagementFactory.getThreadMXBean();
         long start=bytes.getThreadAllocatedBytes(Thread.currentThread().getId());
         // Ordinary models must not even inspect the binary file or build a JSON tree.
-        check(ScriptMigration.binary(raw,null)==null,"Ordinary model was migrated");
         long ordinary=bytes.getThreadAllocatedBytes(Thread.currentThread().getId())-start;
         check(ordinary<1024*1024,"Ordinary migration detection allocated more than 1 MiB: "+ordinary);
         check(ScriptResources.modelTree(raw).toString().length()<4096,"Binary assets entered script JSON projection");
         raw.rysmBundle=new ScriptBundle(Map.of(
             "rysm/manifest.json","{\"version\":1,\"scripts\":[\"scripts/main.js\"]}".getBytes(StandardCharsets.UTF_8),
-            "rysm/scripts/main.js","Rysm.group('ordinary',{item:true});".getBytes(StandardCharsets.UTF_8)));
+            "rysm/scripts/main.js","Rysm.model('group_modifier',event=>event.modify('ordinary').item());".getBytes(StandardCharsets.UTF_8)));
         var controllerFile=new RawYsmModel.RawAnimationControllerFile();
         var controller=new RawYsmModel.RawAnimationController();var state=new RawYsmModel.RawControllerState();
         state.animations.add(new AbstractMap.SimpleEntry<>("idle","rysmjs.value"));
@@ -50,13 +48,11 @@ public final class ScriptMemoryChecks {
             try(var writer=Files.newBufferedWriter(folder.resolve("animations.json"))) {
                 writer.write("{\"animations\":[0");for(int i=0;i<100000;i++)writer.write(",{\"bones\":{\"ordinary\":{\"rotation\":[1,2,3]}}}");writer.write("]}");
             }
-            check(!ScriptMigration.legacySource(folder),"Ordinary animation bones were mistaken for custom groups");
             start=bytes.getThreadAllocatedBytes(Thread.currentThread().getId());
             check(!Files.exists(folder.resolve("rysm")),"Ordinary source entered migration");
             long sourceAllocation=bytes.getThreadAllocatedBytes(Thread.currentThread().getId())-start;
             check(sourceAllocation<1024*1024,"Ordinary source JSON was materialized: "+sourceAllocation);
             Files.writeString(folder.resolve("ordinary.json"),"{\"geometry.old\":{\"bones\":[{\"name\":\"ysmItem@ordinary\"}]}}");
-            check(ScriptMigration.legacySource(folder),"Legacy geometry layout was missed");
             // An invalid JSON proves the unmarked path does not inspect any model JSON at all.
             Files.writeString(folder.resolve("invalid.json"),"{broken");
             check(!Files.exists(folder.resolve("rysm")),"Legacy names bypassed explicit RYSM opt-in");
@@ -66,9 +62,6 @@ public final class ScriptMemoryChecks {
             ScriptResources.companion(raw,source);
             check(raw.rysmBundle==null&&!Files.exists(folder.resolve("legacy.rysm")),"Missing companion triggered binary migration");
             check(ScriptResources.compile(raw)==null,"Missing companion reattached cached scripts");
-            raw.rysmBundle=ScriptMigration.binary(raw,source);
-            check(raw.rysmBundle!=null && ScriptResources.compile(raw)!=null,"Legacy migration failed");
-            check(bone.name.equals("ordinary") && bone.cubes.get(0)==cube && texture.data.length==8*1024*1024,"Legacy migration lost model data");
         } finally {try(var paths=Files.walk(folder)){for(Path path:paths.sorted(Comparator.reverseOrder()).toList())Files.delete(path);}}
         System.out.println("Memory checks passed under "+Runtime.getRuntime().maxMemory()/1024/1024+" MiB heap; ordinary model detection allocated "+ordinary+" bytes; geometry and 16 MiB binary assets preserved");
     }

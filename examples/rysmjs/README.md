@@ -21,6 +21,7 @@
 | --- | --- |
 | [effects.js](source/all-features/rysm/scripts/effects.js) | 星空资源、物理链、同组效果叠加和参数合并 |
 | [algorithms.js](source/all-features/rysm/scripts/algorithms.js) | 血量比例、带参数的函数、帧宏和同步数值 |
+| [advanced.js](source/all-features/rysm/scripts/advanced.js) | 模组属性、属性倍率、组合条件和数值平滑 |
 | [events.js](source/all-features/rysm/scripts/events.js) | 加载日志、按键开关、鼠标计数和姿态变化 |
 
 将脚本用于自己的模型时，按以下顺序修改：
@@ -44,6 +45,20 @@ Rysm.model('group_modifier', event => {
 
 更多参数和 `game` 字段见 [主 README](../../README.md#game-速查)。
 
+## 使用复杂算法示例
+
+`advanced.js` 注册了以下算法：
+
+| 动画查询 | 用途 |
+| --- | --- |
+| `rysmjs.player_flying_speed` | 获取模组注册的飞行速度属性当前值 |
+| `rysmjs.flying_speed_multiplier` | 计算当前值相对基础值的倍率 |
+| `rysmjs.flying_speed_above(0.1)` | 判断当前属性值是否大于指定阈值 |
+| `rysmjs.flight_ready` | 组合属性和生命值条件，返回 `0` 或 `1` |
+| `rysmjs.smooth_flying_speed` | 每 tick 向目标速度靠近 `20%` |
+
+将示例中的属性 ID 改为实际值。按 F10 可将当前值和基础值输出到聊天栏。详细写法见 [玩家属性](../../README.md#读取玩家属性)。
+
 ## 查看模型效果
 
 | 模型部件 | 操作与效果 |
@@ -62,43 +77,15 @@ Rysm.model('group_modifier', event => {
 
 五个输入指示灯使用 `sync: true`。在支持同步的服务器上，其他玩家可看到相同状态。
 
-## 在 Blockbench 中预览
+## 在 Blockbench 中编辑
 
-1. 安装 [分组编辑器](../../blockbench/README.md)。
-2. 导入 `source/all-features/models/main.json`。
-3. 将项目保存为同目录中的 `main.bbmodel`。
-4. 执行「导入模型脚本属性」。
-5. 打开「JavaScript 编辑与预览」。
-6. 在默认模拟数据中添加 `molang` 查询值，再点击「运行预览」。
+1. 安装 [RYSM 编辑器](../../blockbench/README.md)。
+2. 导入 `source/all-features/models/main.json`，将项目保存为同目录中的 `main.bbmodel`。
+3. 打开「JavaScript 编辑器」，查看或编辑各独立脚本，使用补全、逐行诊断与颜色选择辅助编写。
+4. 如需表单编辑组属性，可从当前组创建新的声明式配置；插件将其写入只读的 `scripts/generated.blockbench.js`。不要同时在手写脚本中维护同组同类效果，以免后加载声明覆盖前面的字段。
+5. 在编辑模式开启物理骨链或碰撞体积静态辅助。此示例的手写效果不自动反向导入表单或运行预览。
 
-以下 JSON 可直接用作模拟数据：
-
-```json
-{
-  "entity": {"local": true, "health": 10, "maxHealth": 20, "yaw": 0},
-  "camera": {"yaw": 30, "pitch": 10},
-  "molang": {"rysm.longitudinal_speed": 1},
-  "keys": [],
-  "bindings": [],
-  "remote": {}
-}
-```
-
-运行后，在 `keys` 中添加 `"key.keyboard.escape"`，可切换 ESC 指示灯。在 `bindings` 中添加 `"key.inventory"`，可点亮物品栏指示灯。删除标识可模拟松开。
-
-预览远端状态时，将 `entity.local` 改为 `false`，并填写：
-
-```json
-{
-  "escape_toggle": 1,
-  "inventory": 0,
-  "backpack": 0,
-  "mouse": 0,
-  "releases": 1
-}
-```
-
-将上面的对象放入 `remote` 字段。视口预览显示组姿态和星空动画，物理运动在游戏中查看。
+按键、属性查询、同步、姿态、星空及物理运动均需在 Minecraft 中检查。
 
 ## 开发检查
 

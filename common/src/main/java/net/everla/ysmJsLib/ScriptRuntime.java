@@ -92,13 +92,7 @@ public final class ScriptRuntime {
             cx.evaluateString(scope, LIMITS, "rysmjs-limits",1,null);
             for(String key:List.of("eval","Function","Packages","java","javax","org","com","getClass","RegExp"))ScriptableObject.deleteProperty(scope,key);
             var api=object(cx);
-            define(api,"logKeyBindings",args -> {if(registering)logKeyBindingsRequested=true;return null;});
             define(api,"model",this::model);
-            define(api,"group",args -> {register(groups,args);return null;});
-            define(api,"cosmic",args -> {register(cosmic,args);return null;});
-            define(api,"molang",this::registerMolang);
-            define(api,"update",args -> {updates.add(callback(args));return null;});
-            define(api,"pose",args -> {poses.add(callback(args));return null;});
             api.sealObject();ScriptableObject.defineProperty(scope,"Rysm",api,ScriptableObject.READONLY|ScriptableObject.PERMANENT);
             JsonArray scripts=bundle.manifest().getAsJsonArray("scripts");
             if(scripts==null || scripts.size()>64)throw new IllegalArgumentException("Expected at most 64 script entries");
@@ -221,7 +215,8 @@ public final class ScriptRuntime {
         };
         ScriptableObject.defineProperty(target,name,fn,ScriptableObject.READONLY|ScriptableObject.PERMANENT);
     }
-    public ScriptableObject snapshot(Map<String,?> values) {
+    public ScriptableObject snapshot(Map<String,?> values) {return snapshot(values,out->{});}
+    public ScriptableObject snapshot(Map<String,?> values,java.util.function.Consumer<ScriptableObject> methods) {
         var out=object(Context.getCurrentContext());
         for(var e:values.entrySet()) {
             Object v=e.getValue();
@@ -229,7 +224,7 @@ public final class ScriptRuntime {
             if(!(v instanceof String || v instanceof Number || v instanceof Boolean || v instanceof Scriptable))throw new IllegalArgumentException("Unsupported bridge value");
             ScriptableObject.defineProperty(out,e.getKey(),v,ScriptableObject.READONLY|ScriptableObject.PERMANENT);
         }
-        out.sealObject();return out;
+        methods.accept(out);out.sealObject();return out;
     }
     public Object run(java.util.function.Function<Context,Object> work) {
         return FACTORY.call(cx -> {

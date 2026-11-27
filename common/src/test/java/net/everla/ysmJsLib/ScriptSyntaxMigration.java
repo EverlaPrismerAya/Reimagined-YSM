@@ -15,7 +15,18 @@ public final class ScriptSyntaxMigration {
         String candidate="__rysm_event";
         while(source.contains(candidate))candidate+="_";
         final String event=candidate;
-        new Parser(env).parse(source,"migration",1).visit(node->{
+        var tree=new Parser(env).parse(source,"migration",1);
+        tree.visit(node->{
+            if(node instanceof FunctionCall call && call.getTarget().toSource().equals("Rysm.logKeyBindings") && call.getEnclosingFunction()!=null)
+                edits.add(new Edit(call.getAbsolutePosition(),call.getAbsolutePosition()+call.getLength(),"void 0"));
+            return true;
+        });
+        if(!edits.isEmpty()) {
+            var result=new StringBuilder(source);edits.sort(Comparator.comparingInt(Edit::start).reversed());
+            for(var edit:edits)result.replace(edit.start,edit.end,edit.text);
+            return convert(result.toString());
+        }
+        tree.visit(node->{
             if(!(node instanceof FunctionCall call))return true;
             String target=call.getTarget().toSource();var args=call.getArguments();
             if(!target.equals("Rysm.group")) {
@@ -27,7 +38,7 @@ public final class ScriptSyntaxMigration {
                     case "Rysm.logKeyBindings" -> "load";
                     default -> null;
                 };
-                if(type==null || type.equals("load")&&call.getEnclosingFunction()!=null)return true;
+                if(type==null)return true;
                 String replacement;
                 if(type.equals("tick") || type.equals("pose")) {
                     if(args.size()!=1)throw new IllegalArgumentException("Expected one "+type+" callback");
@@ -56,17 +67,4 @@ public final class ScriptSyntaxMigration {
     }
     private static String key(ObjectProperty p) {return p.getLeft() instanceof StringLiteral s?s.getValue():p.getLeft().toSource();}
     private static String text(String source,AstNode node) {return source.substring(node.getAbsolutePosition(),node.getAbsolutePosition()+node.getLength());}
-    public static void migrate(Path root) throws Exception {
-        var bundle=ScriptBundle.directory(root);
-        if(bundle==null)throw new java.io.IOException("No JS manifest in "+root);
-        var writes=new LinkedHashMap<Path,String>();
-        for(var entry:bundle.manifest().getAsJsonArray("scripts")) {
-            String path="rysm/"+entry.getAsString();ScriptBundle.checkPath(path);
-            String before=bundle.text(path),after=convert(before);
-            if(!before.equals(after))writes.put(root.resolve(path),after);
-        }
-        if(writes.isEmpty())throw new java.io.IOException("No old JS registrations in "+root);
-        for(var entry:writes.entrySet())Files.writeString(entry.getKey(),entry.getValue());
-        new ScriptModel(ScriptBundle.directory(root));
-    }
 }

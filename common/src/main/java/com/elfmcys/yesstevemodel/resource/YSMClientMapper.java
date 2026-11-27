@@ -462,8 +462,8 @@ public class YSMClientMapper {
         TranslucencyScanner armScanner = raw.mainEntity.armModel != null ?
                 mainScanner != null ? mainScanner.fork(textureCount) : new TranslucencyScanner(imagesArray, textureCount) : null;
 
-        GeoModel mainMesh = buildMesh(raw.mainEntity.mainModel, context, textureCount, mainScanner, raw.properties.allCutout);
-        GeoModel armMesh = raw.mainEntity.armModel != null ? buildMesh(raw.mainEntity.armModel, context, textureCount, armScanner, raw.properties.allCutout) : mainMesh;
+        GeoModel mainMesh = buildMesh(raw.mainEntity.mainModel, context, textureCount, mainScanner, raw.properties.allCutout, "player.main");
+        GeoModel armMesh = raw.mainEntity.armModel != null ? buildMesh(raw.mainEntity.armModel, context, textureCount, armScanner, raw.properties.allCutout, "player.arm") : mainMesh;
 
 //        System.out.println(modelId + Arrays.toString(mainMesh.translucentTexture));
 
@@ -499,7 +499,13 @@ public class YSMClientMapper {
         }
     }
 
-    private static GeoModel buildMesh(RawYsmModel.RawGeometry rawGeo, GeometryDescription context, int textureCount, TranslucencyScanner scanner, boolean allCutout) {
+    private static GeoModel buildMesh(RawYsmModel.RawGeometry rawGeo, GeometryDescription context, int textureCount, TranslucencyScanner scanner, boolean allCutout, String role) {
+        var shared=net.everla.ysmJsLib.ScriptModel.BUILDING.get();
+        if(shared!=null)net.everla.ysmJsLib.ScriptModel.BUILDING.set(shared.forModel(role));
+        try{return buildScopedMesh(rawGeo,context,textureCount,scanner,allCutout);}
+        finally{if(shared!=null)net.everla.ysmJsLib.ScriptModel.BUILDING.set(shared);}
+    }
+    private static GeoModel buildScopedMesh(RawYsmModel.RawGeometry rawGeo, GeometryDescription context, int textureCount, TranslucencyScanner scanner, boolean allCutout) {
         if (rawGeo == null || rawGeo.bones.isEmpty()) {
             boolean[] fallbackArray = scanner != null ? scanner.getResults() : new boolean[Math.max(1, textureCount)];
             return buildMesh(new GeoBone[0], new HashMap<>(), context, fallbackArray);
@@ -1024,7 +1030,7 @@ public class YSMClientMapper {
     private static ProjectileModelFiles[] buildExtraItemModels(RawYsmModel raw, GeometryDescription context, boolean mergeMultilineExpr) {
         List<ProjectileModelFiles> list = new ArrayList<>();
         for (RawYsmModel.RawSubEntity sub : raw.projectiles) {
-            ProjectileModelFiles holder = buildSubEntityHolder(sub, context, 1, mergeMultilineExpr);
+            ProjectileModelFiles holder = buildSubEntityHolder(sub, context, 1, mergeMultilineExpr, "projectiles."+list.size());
             list.add(holder);
         }
         return list.toArray(new ProjectileModelFiles[0]);
@@ -1033,13 +1039,13 @@ public class YSMClientMapper {
     private static VehicleModelFiles[] buildExtraEntityModels(RawYsmModel raw, GeometryDescription context, boolean mergeMultilineExpr) {
         List<VehicleModelFiles> list = new ArrayList<>();
         for (RawYsmModel.RawSubEntity sub : raw.vehicles) {
-            VehicleModelFiles wrapper = buildSubEntityWrapper(sub, context, 1, mergeMultilineExpr);
+            VehicleModelFiles wrapper = buildSubEntityWrapper(sub, context, 1, mergeMultilineExpr, "vehicles."+list.size());
             list.add(wrapper);
         }
         return list.toArray(new VehicleModelFiles[0]);
     }
 
-    private static ProjectileModelFiles buildSubEntityHolder(RawYsmModel.RawSubEntity sub, GeometryDescription context, int textureCount, boolean mergeMultilineExpr) {
+    private static ProjectileModelFiles buildSubEntityHolder(RawYsmModel.RawSubEntity sub, GeometryDescription context, int textureCount, boolean mergeMultilineExpr, String role) {
         OuterFileTexture texture = null;
         TranslucencyScanner subScanner = null;
 
@@ -1057,7 +1063,7 @@ public class YSMClientMapper {
             }
         }
 
-        GeoModel mesh = buildMesh(sub.model, context, textureCount, subScanner, false);
+        GeoModel mesh = buildMesh(sub.model, context, textureCount, subScanner, false, role);
 
         Map<String, Animation> allAnimations = new LinkedHashMap<>();
         for (Map.Entry<String, RawYsmModel.RawAnimationFile> entry : sub.animationFiles.entrySet()) {
@@ -1080,7 +1086,7 @@ public class YSMClientMapper {
         return new ProjectileModelFiles(matchIds, mesh, combinedAnim, controllers, texture);
     }
 
-    private static VehicleModelFiles buildSubEntityWrapper(RawYsmModel.RawSubEntity sub, GeometryDescription context, int textureCount, boolean mergeMultilineExpr) {
+    private static VehicleModelFiles buildSubEntityWrapper(RawYsmModel.RawSubEntity sub, GeometryDescription context, int textureCount, boolean mergeMultilineExpr, String role) {
         OuterFileTexture texture = null;
         TranslucencyScanner subScanner = null;
 
@@ -1098,7 +1104,7 @@ public class YSMClientMapper {
             }
         }
 
-        GeoModel mesh = buildMesh(sub.model, context, textureCount, subScanner, false);
+        GeoModel mesh = buildMesh(sub.model, context, textureCount, subScanner, false, role);
 
         Map<String, Animation> allAnimations = new LinkedHashMap<>();
         for (RawYsmModel.RawAnimationFile animFile : sub.animationFiles.values()) {

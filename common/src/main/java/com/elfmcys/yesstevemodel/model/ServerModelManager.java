@@ -537,7 +537,6 @@ public final class ServerModelManager {
         long begin = System.currentTimeMillis();
         ForkJoinPool pool = createLoadPool();
         try {
-            net.everla.ysmJsLib.ScriptUpgrade.process(FOLDER.resolve("rysm_upgrade"), CUSTOM);
             Map<String, ServerModelData> loadedModels = new ConcurrentHashMap<>();
             Set<String> authIds = ConcurrentHashMap.newKeySet();
             Set<String> validCacheFiles = ConcurrentHashMap.newKeySet();

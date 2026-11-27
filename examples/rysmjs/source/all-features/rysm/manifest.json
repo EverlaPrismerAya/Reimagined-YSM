@@ -3,6 +3,7 @@
   "scripts": [
     "scripts/effects.js",
     "scripts/algorithms.js",
+    "scripts/advanced.js",
     "scripts/events.js"
   ]
 }
