@@ -160,6 +160,16 @@ public final class PhysSimulation {
         sampledFrame=false;
         if(activeJoints.isEmpty()) return;
         restore(parameters);
+        // A render pass is not a simulation sample. Shadow/layer/first-person
+        // draws may supply another root or animation at the same world time.
+        // Apply the existing correction to that draw without rebasing/resetting
+        // particles, clearing frame velocity, or replacing simulation targets.
+        if(initialized && time==lastTime && currentWorld==world && !projectHandoffDisplay) {
+            base=parameters.clone();
+            reconstruct(parameters);
+            applied=true;
+            return;
+        }
         // Extra render passes can restore animation between identical world draws.
         // Reuse only the displayed rotations, leaving caller-owned visibility/light intact.
         if(projectHandoffDisplay && displayed!=null && time==lastTime && currentWorld==world

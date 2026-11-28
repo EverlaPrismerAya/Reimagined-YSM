@@ -109,6 +109,14 @@ tasks.register('scriptMemoryChecks', JavaExec) {
     maxHeapSize = '96m'
 }
 
+tasks.register('physicsChecks', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+    mainClass = 'net.everla.ysmPhysLib.PhysicsChecks'
+    workingDir rootProject.projectDir
+    if (project.hasProperty('physicsModel')) args project.property('physicsModel')
+}
+
 tasks.register('modelLoadingChecks', JavaExec) {
     dependsOn testClasses
     classpath = sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath

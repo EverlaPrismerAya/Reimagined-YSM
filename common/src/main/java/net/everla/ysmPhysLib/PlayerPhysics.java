@@ -45,6 +45,9 @@ public final class PlayerPhysics {
         if(!allEnabled) GpuPhysics.deactivate(model.getMatrixData());
         model.ysmPhysics.setEnabled(model.getMatrixData(),enabled);
         var entity=animatable.entity;
+        // Promote before addition: float tick ages otherwise quantize subframes
+        // after a long session, producing alternating zero/large elapsed times.
+        double time=((double)entity.tickCount+partialTick)/20.0;
         double x=Mth.lerp(partialTick,entity.xo,entity.getX());
         double y=Mth.lerp(partialTick,entity.yo,entity.getY());
         double z=Mth.lerp(partialTick,entity.zo,entity.getZ());
@@ -54,13 +57,13 @@ public final class PlayerPhysics {
         var cameraPos=camera.getPosition();
         Matrix4f root=new Matrix4f().translation((float)(cameraPos.x-x),(float)(cameraPos.y-y),(float)(cameraPos.z-z))
                 .mul(WorldPhysicsContext.modelToWorld(renderPose));
-        if(allEnabled && GpuPhysics.prepare(model,root,(entity.tickCount+partialTick)/20.0,mc.isPaused(),entity.level(),x,y,z,fps,
+        if(allEnabled && GpuPhysics.prepare(model,root,time,mc.isPaused(),entity.level(),x,y,z,fps,
                 animatable.getTextureLocation()!=null,bounds->entity.level().getBlockCollisions(entity,bounds))) return;
         long started=System.nanoTime();
-        model.ysmPhysics.update(model.getMatrixData(),root,(entity.tickCount+partialTick)/20.0,mc.isPaused(),
+        model.ysmPhysics.update(model.getMatrixData(),root,time,mc.isPaused(),
                 entity.level(),x,y,z,bounds->entity.level().getBlockCollisions(entity,bounds));
         if(allEnabled && model.ysmPhysics.sampledFrame())
-            GpuPhysics.recordCpu(definition,entity.level(),fps,(entity.tickCount+partialTick)/20.0,System.nanoTime()-started);
+            GpuPhysics.recordCpu(definition,entity.level(),fps,time,System.nanoTime()-started);
     }
 
     static boolean[] enabled(PhysDefinition definition,java.util.function.Predicate<String> animation,
