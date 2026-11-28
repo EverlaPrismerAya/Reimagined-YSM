@@ -80,7 +80,7 @@ public final class GroupEffectRenderer {
         // Preflight runs inside the draw coordinator too; restore its temporary
         // framebuffer/texture bindings before the ordinary world surface draws.
         try(var saved=coordinate();var draw=new DrawState()) {
-            gpuPrograms();
+            debugGl("before gpuPrograms");gpuPrograms();debugGl("gpuPrograms");
             // Dynamic same-group volumes require camera-aware CPU transforms, only for this range.
             if(requiresDynamicClipping(model)){cpuRanges.add(model);return true;}
             if(model.overlayOnly){if(dynamicMask==0)dynamicMask=program("/group_mask.fsh");ensureSilhouetteResources();if(model.renderSource!=null){var full=GpuRenderPath.getOrBuildMesh(model.renderSource);if(full.groups==null)full.groups=new GroupGpuMesh(model.renderSource);}}
@@ -293,7 +293,7 @@ public final class GroupEffectRenderer {
             GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,1,mesh.groups.vbo);
         }
         RenderSystem.enableDepthTest();RenderSystem.depthFunc(GL11.GL_LEQUAL);RenderSystem.disableCull();
-        if(net.everla.reimaginedysm.compat.oculus.OculusCompat.isShaderPackInUse())
+        if(!preview && net.everla.reimaginedysm.compat.oculus.OculusCompat.isShaderPackInUse())
             drawGpuMaterials(model,mesh.groups,instance,bones,textureIndex,part,light,overlay,r,g,b,alpha,texture,preview);
         else {
             GL30.glBindVertexArray(mesh.groups.vao);
@@ -372,7 +372,9 @@ public final class GroupEffectRenderer {
         GlStateManager._activeTexture(GL13.GL_TEXTURE0+4);GlStateManager._bindTexture(silhouetteTexture);
         if(silhouetteWidth!=silhouetteViewport[2] || silhouetteHeight!=silhouetteViewport[3]) {
             silhouetteWidth=silhouetteViewport[2];silhouetteHeight=silhouetteViewport[3];
-            GL11.glTexImage2D(GL11.GL_TEXTURE_2D,0,GL30.GL_R8,silhouetteWidth,silhouetteHeight,0,GL11.GL_RED,GL11.GL_UNSIGNED_BYTE,(ByteBuffer)null);
+            try(var unpack=new ShaderUtil.SavedPixelUnpackState()) {
+                GL11.glTexImage2D(GL11.GL_TEXTURE_2D,0,GL30.GL_R8,silhouetteWidth,silhouetteHeight,0,GL11.GL_RED,GL11.GL_UNSIGNED_BYTE,(ByteBuffer)null);
+            }
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D,GL11.GL_TEXTURE_MIN_FILTER,GL11.GL_NEAREST);GL11.glTexParameteri(GL11.GL_TEXTURE_2D,GL11.GL_TEXTURE_MAG_FILTER,GL11.GL_NEAREST);
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D,GL11.GL_TEXTURE_WRAP_S,GL13.GL_CLAMP_TO_BORDER);GL11.glTexParameteri(GL11.GL_TEXTURE_2D,GL11.GL_TEXTURE_WRAP_T,GL13.GL_CLAMP_TO_BORDER);
         }
@@ -585,7 +587,7 @@ public final class GroupEffectRenderer {
     private static void draw(GeoModel model,List<Batch> batches,int textureIndex,int light,int overlay,
                              float r,float g,float b,float alpha,ResourceLocation texture,boolean preview) {
         try(var saved=coordinate()) {
-            if(net.everla.reimaginedysm.compat.oculus.OculusCompat.isShaderPackInUse()) {
+            if(!preview && net.everla.reimaginedysm.compat.oculus.OculusCompat.isShaderPackInUse()) {
                 drawMaterials(model,batches,textureIndex,light,overlay,r,g,b,alpha,texture,preview);
             } else drawSurface(model,batches,textureIndex,light,overlay,r,g,b,alpha,texture,preview);
         }
@@ -626,7 +628,7 @@ public final class GroupEffectRenderer {
                 if(model.overlayOnly && band!=2)continue;
                 var style=model.bakedBones.get(batch.bone).style;
                 int p=band!=2 && style.cosmic()?materialCosmic:material;
-                GlStateManager._glUseProgram(p);
+                bind(p);
                 uniform(p,"texture0",0);atlasUniforms(p,triangles,band);
                 uniform(p,"alphaMode",band==2?0:band+1);
                 if(p==materialCosmic) {
@@ -699,7 +701,9 @@ public final class GroupEffectRenderer {
         if(target==null) {
             target=new AtlasTarget(GL11.glGenTextures(),GL30.glGenFramebuffers(),size);atlasTargets.put(size,target);
             GlStateManager._activeTexture(GL13.GL_TEXTURE0);GlStateManager._bindTexture(target.texture());
-            GL11.glTexImage2D(GL11.GL_TEXTURE_2D,0,GL11.GL_RGBA8,size,size,0,GL11.GL_RGBA,GL11.GL_UNSIGNED_BYTE,(ByteBuffer)null);
+            try(var unpack=new ShaderUtil.SavedPixelUnpackState()) {
+                GL11.glTexImage2D(GL11.GL_TEXTURE_2D,0,GL11.GL_RGBA8,size,size,0,GL11.GL_RGBA,GL11.GL_UNSIGNED_BYTE,(ByteBuffer)null);
+            }
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D,GL11.GL_TEXTURE_MIN_FILTER,GL11.GL_NEAREST);GL11.glTexParameteri(GL11.GL_TEXTURE_2D,GL11.GL_TEXTURE_MAG_FILTER,GL11.GL_NEAREST);
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D,GL11.GL_TEXTURE_WRAP_S,GL12.GL_CLAMP_TO_EDGE);GL11.glTexParameteri(GL11.GL_TEXTURE_2D,GL11.GL_TEXTURE_WRAP_T,GL12.GL_CLAMP_TO_EDGE);
             net.everla.reimaginedysm.gpu.RenderMetrics.add("atlasAllocations",1);
@@ -897,7 +901,9 @@ public final class GroupEffectRenderer {
     }
     private static void bind(int p) {
         currentProgram=p;
-        GlStateManager._glUseProgram(p);uniform(p,"texture0",0);matrix(p,RenderSystem.getProjectionMatrix());
+        // Shader-pack sampler objects override our texture-array/atlas filters.
+        if(GL.getCapabilities().OpenGL33)for(int unit=0;unit<6;unit++)GL33.glBindSampler(unit,0);
+        GlStateManager._glUseProgram(p);uniform(p,"texture0",0);matrix(p,new Matrix4f(RenderSystem.getProjectionMatrix()).mul(RenderSystem.getModelViewMatrix()));
     }
     private static void surfaceUniforms(int light,int overlay) {surfaceUniforms(surface,light,overlay);}
     private static void surfaceUniforms(int program,int light,int overlay) {
@@ -924,12 +930,13 @@ public final class GroupEffectRenderer {
         GL20.glUniform4f(location(p,name),color<0?-1:((color>>16)&255)/255f,
                 color<0?-1:((color>>8)&255)/255f,color<0?-1:(color&255)/255f,a);
     }
+    private static void debugGl(String stage){int error=GL11.glGetError();if(error!=0)throw new IllegalStateException(stage+" GL error 0x"+Integer.toHexString(error)+" program="+GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM));}
     private static void cosmicUniforms(int program,GroupStyle style,boolean preview,int light,GeoModel model,String effect) {
-        var mc=Minecraft.getInstance();
+        debugGl("before cosmicUniforms");var mc=Minecraft.getInstance();
         int ticks=mc.level==null?(int)(net.minecraft.Util.getMillis()/50): (int)mc.level.getGameTime();
         int count=net.everla.ysmJsLib.CosmicTextures.bind(model.scripts,effect,ticks);
         if(count==0){updateStars(ticks);count=10;}
-        net.everla.reimaginedysm.gpu.CosmicLayers.bind(program);
+        debugGl("cosmic textures");net.everla.reimaginedysm.gpu.CosmicLayers.bind(program);debugGl("cosmic layers");
         uniform(program,"cosmiccount",count);
         scalar(program,"cosmicoutof",count*10.1f);
         uniform(program,"stars",3);uniform(program,"time",ticks);
@@ -940,7 +947,7 @@ public final class GroupEffectRenderer {
         float brightness=Math.max(.2f,Math.max(light&65535,light>>>16)/240f);
         GL20.glUniform3f(location(program,"lightlevel"),brightness,brightness,brightness);
         rgb(program,"spaceTint",style.spaceColor(),style.spaceAlpha());
-        rgb(program,"astralTint",style.astralColor(),style.astralAlpha());
+        rgb(program,"astralTint",style.astralColor(),style.astralAlpha());debugGl("cosmic uniforms");
     }
 
     private record DefaultSprite(java.awt.image.BufferedImage image,int[] sequence) {}
@@ -974,7 +981,9 @@ public final class GroupEffectRenderer {
         if(stars==0) {
             prepareStars();
             stars=GL11.glGenTextures();GL11.glBindTexture(GL30.GL_TEXTURE_2D_ARRAY,stars);
-            GL12.glTexImage3D(GL30.GL_TEXTURE_2D_ARRAY,0,GL11.GL_RGBA8,16,16,10,0,GL11.GL_RGBA,GL11.GL_UNSIGNED_BYTE,(ByteBuffer)null);
+            try(var unpack=new ShaderUtil.SavedPixelUnpackState()) {
+                GL12.glTexImage3D(GL30.GL_TEXTURE_2D_ARRAY,0,GL11.GL_RGBA8,16,16,10,0,GL11.GL_RGBA,GL11.GL_UNSIGNED_BYTE,(ByteBuffer)null);
+            }
             GL11.glTexParameteri(GL30.GL_TEXTURE_2D_ARRAY,GL11.GL_TEXTURE_MIN_FILTER,GL11.GL_NEAREST);
             GL11.glTexParameteri(GL30.GL_TEXTURE_2D_ARRAY,GL11.GL_TEXTURE_MAG_FILTER,GL11.GL_NEAREST);
             Arrays.fill(lastFrames,-1);
@@ -1033,7 +1042,9 @@ public final class GroupEffectRenderer {
                 depthMask=GL11.glGetBoolean(GL11.GL_DEPTH_WRITEMASK);
         final byte[] mask=new byte[4];final int starTex,layoutTex;
         final int[] textures=new int[5],shaderTextures=new int[5];
+        final int[] samplers=new int[6];
         DrawState() {
+            if(GL.getCapabilities().OpenGL33)for(int i=0;i<samplers.length;i++)samplers[i]=GL30.glGetIntegeri(GL33.GL_SAMPLER_BINDING,i);
             GL11.glGetIntegerv(GL11.GL_VIEWPORT,viewport);
             GL20.glGetVertexAttribfv(1,GL20.GL_CURRENT_VERTEX_ATTRIB,attributeColor);
             ByteBuffer bytes=MemoryUtil.memAlloc(4);
@@ -1046,6 +1057,7 @@ public final class GroupEffectRenderer {
             GlStateManager._activeTexture(GL13.GL_TEXTURE5);layoutTex=GL11.glGetInteger(GL31.GL_TEXTURE_BINDING_BUFFER);
         }
         public void close() {
+            if(GL.getCapabilities().OpenGL33)for(int i=0;i<samplers.length;i++)GL33.glBindSampler(i,samplers[i]);
             GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER,drawFramebuffer);
             GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER,readFramebuffer);
             GL11.glViewport(viewport[0],viewport[1],viewport[2],viewport[3]);

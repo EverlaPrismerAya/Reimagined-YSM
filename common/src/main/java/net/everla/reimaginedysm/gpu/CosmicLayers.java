@@ -10,9 +10,10 @@ public final class CosmicLayers {
     public static void bind(int shader) {
         if(failed||!GL.getCapabilities().OpenGL43)return;
         if(rotations==null)try{prepare();}catch(Exception|LinkageError failure){failed=true;return;}
+        int restored=GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);int err=GL11.glGetError();if(err!=0||restored!=shader)throw new IllegalStateException("Cosmic prepare expected="+shader+" active="+restored+" error="+err);
         if(uploaded.add(shader)) {
-            GL20.glUniformMatrix4fv(GL20.glGetUniformLocation(shader,"cosmicRotation[0]"),false,rotations);
-            GL20.glUniform4fv(GL20.glGetUniformLocation(shader,"cosmicLayer[0]"),values);
+            GL20.glUniformMatrix4fv(GL20.glGetUniformLocation(shader,"cosmicRotation[0]"),false,rotations);if(GL11.glGetError()!=0)throw new IllegalStateException("Cosmic rotation upload program="+shader);
+            GL20.glUniform4fv(GL20.glGetUniformLocation(shader,"cosmicLayer[0]"),values);if(GL11.glGetError()!=0)throw new IllegalStateException("Cosmic values upload program="+shader);
         }
         GL20.glUniform1i(GL20.glGetUniformLocation(shader,"precomputedLayers"),1);
     }

@@ -70,13 +70,15 @@ public final class ShaderUtil {
         private static final int[] PARAMETERS={GL11.GL_UNPACK_ALIGNMENT,GL11.GL_UNPACK_ROW_LENGTH,
                 GL11.GL_UNPACK_SKIP_PIXELS,GL11.GL_UNPACK_SKIP_ROWS,GL12.GL_UNPACK_IMAGE_HEIGHT,GL12.GL_UNPACK_SKIP_IMAGES};
         private final int[] previous=new int[PARAMETERS.length];
+        private final int buffer=GL11.glGetInteger(GL21.GL_PIXEL_UNPACK_BUFFER_BINDING);
         public SavedPixelUnpackState() {
+            GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER,0);
             for(int i=0;i<PARAMETERS.length;i++) {
                 previous[i]=GL11.glGetInteger(PARAMETERS[i]);
                 GL11.glPixelStorei(PARAMETERS[i],i==0?1:0);
             }
         }
-        public void close(){for(int i=0;i<PARAMETERS.length;i++)GL11.glPixelStorei(PARAMETERS[i],previous[i]);}
+        public void close(){for(int i=0;i<PARAMETERS.length;i++)GL11.glPixelStorei(PARAMETERS[i],previous[i]);GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER,buffer);}
     }
     /** Preserve indexed ranges, generic SSBO binding and the caller's GL program. */
     public static class SavedComputeState implements AutoCloseable {

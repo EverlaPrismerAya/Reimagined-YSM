@@ -47,7 +47,7 @@ public final class CosmicTextures {
             if(texture.id==0)upload(texture);
         }catch(Exception e){FAILED.add(key);org.slf4j.LoggerFactory.getLogger("rysmjs").warn("[rysmjs] Cosmic {} uses default textures: {}",key,e.toString());return 0;}
         GlStateManager._activeTexture(GL13.GL_TEXTURE0+3);GL11.glBindTexture(GL30.GL_TEXTURE_2D_ARRAY,texture.id);
-        if(texture.lastTick==ticks)return texture.sprites.size();texture.lastTick=ticks;
+        if(texture.lastTick==ticks){GlStateManager._activeTexture(GL13.GL_TEXTURE0);return texture.sprites.size();}texture.lastTick=ticks;
         try(var unpack=new net.everla.reimaginedysm.gpu.ShaderUtil.SavedPixelUnpackState()) {
             for(int i=0;i<texture.sprites.size();i++) {
                 Sprite s=texture.sprites.get(i);int time=Math.floorMod(ticks,s.duration),frame=0;
@@ -56,7 +56,7 @@ public final class CosmicTextures {
                     GL12.glTexSubImage3D(GL30.GL_TEXTURE_2D_ARRAY,0,0,0,i,texture.size,texture.size,1,GL11.GL_RGBA,GL11.GL_UNSIGNED_BYTE,data.slice());texture.last[i]=frame;}
             }
         }
-        return texture.sprites.size();
+        GlStateManager._activeTexture(GL13.GL_TEXTURE0);return texture.sprites.size();
     }
     private static Texture load(ScriptModel model,String effect) throws Exception {
         JsonObject config=model.cosmic.get(effect);if(config==null)throw new IllegalArgumentException("Unknown effect");
@@ -95,7 +95,9 @@ public final class CosmicTextures {
     }
     private static void upload(Texture result) {
         result.id=GL11.glGenTextures();GlStateManager._activeTexture(GL13.GL_TEXTURE0+3);GL11.glBindTexture(GL30.GL_TEXTURE_2D_ARRAY,result.id);
-        GL12.glTexImage3D(GL30.GL_TEXTURE_2D_ARRAY,0,GL11.GL_RGBA8,result.size,result.size,result.sprites.size(),0,GL11.GL_RGBA,GL11.GL_UNSIGNED_BYTE,(ByteBuffer)null);
+        try(var unpack=new net.everla.reimaginedysm.gpu.ShaderUtil.SavedPixelUnpackState()) {
+            GL12.glTexImage3D(GL30.GL_TEXTURE_2D_ARRAY,0,GL11.GL_RGBA8,result.size,result.size,result.sprites.size(),0,GL11.GL_RGBA,GL11.GL_UNSIGNED_BYTE,(ByteBuffer)null);
+        }
         GL11.glTexParameteri(GL30.GL_TEXTURE_2D_ARRAY,GL11.GL_TEXTURE_MIN_FILTER,GL11.GL_NEAREST);GL11.glTexParameteri(GL30.GL_TEXTURE_2D_ARRAY,GL11.GL_TEXTURE_MAG_FILTER,GL11.GL_NEAREST);
         net.everla.reimaginedysm.gpu.RenderMetrics.add("cosmicTextureAllocations",1);
     }

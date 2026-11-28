@@ -45,13 +45,18 @@ public class NativeModelRenderer {
     }
 
     static boolean isGpuPass(boolean firstPersonBody, boolean globally) {
-        return globally || isGpuPass(firstPersonBody);
+        return !isPreview() && (globally || !firstPersonBody);
     }
 
     static boolean isGpuBuffer(VertexConsumer buffer, float alpha) {
         // Outline and multi-consumers must receive vertices (including invisible,
         // outline-only entities). Direct GPU draws cannot reproduce their passes.
-        return buffer instanceof BufferBuilder && alpha == 1.0f;
+        return isDirectBuffer(buffer) && alpha == 1.0f;
+    }
+
+    static boolean isDirectBuffer(VertexConsumer buffer) {
+        return buffer instanceof BufferBuilder || buffer!=null && buffer.getClass().getName().equals(
+                "me.jellysquid.mods.sodium.client.render.vertex.buffer.SodiumBufferBuilder");
     }
 
     public static void renderMesh(VertexConsumer buffer, PoseStack.Pose pose, GeoModel model, float[] boneParams, float[] stateBuffer, int textureIndex, int renderPartMask, int packedLight, int packedOverlay, float red, float green, float blue, float alpha) {
@@ -100,7 +105,7 @@ public class NativeModelRenderer {
         RenderSystem.getProjectionMatrix().mul(RenderSystem.getModelViewMatrix(), projectionModelViewMatrix);
         boolean isPreview = isPreview();
 
-        if(model.renderSource==null && textureLocation!=null && buffer instanceof BufferBuilder
+        if(model.renderSource==null && textureLocation!=null && isDirectBuffer(buffer)
                 && model.bakedBones!=null && (model.hasGroupStyles || model.isTranslucentTexture(textureIndex))) {
             try(var scope=GroupEffectRenderer.coordinate()) {
             var slices=model.renderPartition().texture(textureIndex,!OculusCompat.isShaderPackInUse()
@@ -119,7 +124,7 @@ public class NativeModelRenderer {
             }
         }
 
-        if (textureLocation != null && buffer instanceof BufferBuilder
+        if (textureLocation != null && isDirectBuffer(buffer)
                 && (model.hasGroupStyles || model.isTranslucentTexture(textureIndex))) {
             if (GroupEffectRenderer.render(pose, model,
                     boneParams, stateBuffer,
