@@ -34,6 +34,8 @@ public class RendererManager {
     }
 
     private static void resetRenderers() {
+        Runnable cleanup=com.elfmcys.yesstevemodel.geckolib3.geo.GroupEffectRenderer::shutdown;
+        if(com.mojang.blaze3d.systems.RenderSystem.isOnRenderThread())cleanup.run();else com.mojang.blaze3d.systems.RenderSystem.recordRenderCall(cleanup::run);
         playerRenderer = null;
         projectileRenderer = null;
         handRenderer = null;

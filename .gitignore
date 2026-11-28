@@ -122,3 +122,9 @@ tools/
 /logs/
 /yes_steve_model/
 /common/config/
+/common/src/test/
+/fabric/src/acceptance/
+/common/src/acceptance/
+/forge/src/clientProbe/
+/forge/src/acceptance/
+/forge/src/test/

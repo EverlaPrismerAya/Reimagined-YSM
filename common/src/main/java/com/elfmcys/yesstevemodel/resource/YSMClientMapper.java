@@ -72,6 +72,8 @@ public class YSMClientMapper {
         private static final int TILE_SIZE = 8;
         private final AlphaIndex[] indexes;
         private final boolean[] results;
+        private final java.util.BitSet lastTranslucent=new java.util.BitSet();
+        public java.util.BitSet lastTranslucent(){return (java.util.BitSet)lastTranslucent.clone();}
         private BufferedImage[] colorImages;
 
         public static final int FLAG_VISIBLE = 1;
@@ -152,6 +154,7 @@ public class YSMClientMapper {
         }
 
         public int scan(RawYsmModel.RawFace face) {
+            lastTranslucent.clear();
             float minU = face.u[0], maxU = face.u[0];
             float minV = face.v[0], maxV = face.v[0];
             for (int i = 1; i < 4; i++) {
@@ -194,7 +197,7 @@ public class YSMClientMapper {
                 hasTranslucent |= (flags & FLAG_TRANSLUCENT) != 0;
                 hasEmpty |= (flags & FLAG_EMPTY) != 0;
 
-                if (hasTranslucent) results[i] = true;
+                if ((flags & FLAG_TRANSLUCENT)!=0) {results[i]=true;lastTranslucent.set(i);}
             }
 
             if (!hasValidImage) return FLAG_VISIBLE;
@@ -417,7 +420,7 @@ public class YSMClientMapper {
             return new OuterFileTexture(data);
         }
         BufferedImage image = decodedImage != null ? decodedImage : decodeToImage(data, resolvedFormat, width, height);
-        return new OuterFileTexture(encodeToPng(image, data));
+        return image != null ? new OuterFileTexture(image) : new OuterFileTexture(data);
     }
 
     public static ClientModelInfo buildParsedBundle(RawYsmModel raw, String modelId) {
@@ -615,6 +618,7 @@ public class YSMClientMapper {
 
                     GeoModel.BakedQuad bq = new GeoModel.BakedQuad();
                     bq.isTranslucent = isTranslucent;
+                    if(scanner!=null)bq.translucentTextures=scanner.lastTranslucent();
                     System.arraycopy(rf.normal, 0, bq.normal, 0, 3);
                     for (int i = 0; i < 4; i++) {
                         int positionOffset = i * 3;
@@ -691,12 +695,14 @@ public class YSMClientMapper {
         GeoModel mesh = buildMesh(geoBones.toArray(new GeoBone[0]), parentMap, context, translucencyArray);
 
         mesh.scripts=scripts;
+        if(scripts!=null)net.everla.ysmJsLib.CosmicTextures.prepare(scripts);
         mesh.bakedBones = bakedBones;
         mesh.hasFacingCameraBonesOverride(bakedBones.stream().anyMatch(b -> b.facingCamera));
         mesh.hasFrameAnimations = bakedBones.stream().anyMatch(b -> b.frameAnimation != null);
         boolean[] styled = new boolean[bakedBones.size()];
         for(int i=0;i<bakedBones.size();i++) resolveGroupStyle(bakedBones,i,styled);
         mesh.hasGroupStyles=bakedBones.stream().anyMatch(b -> b.style.cosmic() || b.style.outline());
+        if(bakedBones.stream().anyMatch(b->b.style.cosmic()))com.elfmcys.yesstevemodel.geckolib3.geo.GroupEffectRenderer.prepareStars();
         if(scanner!=null) for(int i=0;i<bakedBones.size();i++) {
             var bone=bakedBones.get(i);
             if(bone.outlineGroup==i) bone.averageColors=scanner.averageColors(bakedBones,i);

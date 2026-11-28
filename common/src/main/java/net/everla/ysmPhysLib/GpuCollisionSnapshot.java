@@ -19,19 +19,27 @@ final class GpuCollisionSnapshot {
     private final boolean[] visible, children;
     private final List<PhysCollider> contacts=new ArrayList<>();
     private final List<AABB> queries=new ArrayList<>();
+    private final boolean[] terrain;
+    private final int[] roots;
+    private final float[] padding;
+    private final HashSet<AABB> seen=new HashSet<>();
+    private final Vector3f scale=new Vector3f();
+    private final java.util.IdentityHashMap<PhysDefinition.Cube,PhysCollider> modelPool=new java.util.IdentityHashMap<>();
+    private final List<PhysCollider> terrainPool=new ArrayList<>();
+    private int terrainCursor;
 
     GpuCollisionSnapshot(PhysDefinition definition) {
         this.definition=definition;islands=definition.islands();
         int count=definition.bones.size();
         reach=new float[count];radius=new float[count];points=new Vector3f[count];
-        visible=new boolean[count];children=new boolean[count];
+        visible=new boolean[count];children=new boolean[count];terrain=new boolean[count];roots=new int[count];padding=new float[count];
         java.util.Arrays.setAll(points,i->new Vector3f());
     }
 
     List<PhysCollider> collect(float[] parameters,Matrix4f[] animated,double x,double y,double z,
                               Function<AABB,Iterable<VoxelShape>> blocks) {
-        contacts.clear();
-        for(int i:definition.order) {
+        contacts.clear();terrainCursor=0;
+        for(int i:definition.workOrder) {
             int parent=definition.bones.get(i).parentIdx;
             animated[i].transformPosition(definition.pivot(i),points[i]);
             boolean ancestor=parent<0 || children[parent];
@@ -42,24 +50,21 @@ final class GpuCollisionSnapshot {
             reach[i]=parent>=0 && islands[i]>=0 && islands[parent]==islands[i]
                     ?reach[parent]+points[parent].distance(points[i]):0;
         }
-        for(var cube:definition.cubes) if(visible[cube.bone()]) add(new PhysCollider(cube.faces(),animated[cube.bone()]));
+        for(var cube:definition.cubes)if(visible[cube.bone()]){var collider=modelPool.get(cube);if(collider==null){collider=new PhysCollider(cube.faces(),animated[cube.bone()]);modelPool.put(cube,collider);}else collider.reset(cube.faces(),animated[cube.bone()]);add(collider);}
         if(blocks==null) return contacts;
         java.util.Arrays.fill(radius,-1);
-        boolean[] terrain=new boolean[radius.length];
-        int[] roots=new int[radius.length];
-        for(int i:definition.order) if(islands[i]>=0) {
+        java.util.Arrays.fill(terrain,false);java.util.Arrays.fill(padding,0);
+        for(int i:definition.workOrder) if(islands[i]>=0) {
             int group=islands[i],parent=definition.bones.get(i).parentIdx;
             if(parent<0 || islands[parent]!=group) roots[group]=i;
             radius[group]=Math.max(radius[group],reach[i]);
         }
-        var scale=new Vector3f();
-        float[] padding=new float[radius.length];
         for(var joint:definition.joints) if(joint.parameters().bc()) {
             int group=islands[joint.bone()];terrain[group]=true;
             animated[joint.bone()].getScale(scale);
             padding[group]=Math.max(padding[group],joint.parameters().c()/16f*Math.max(scale.x,Math.max(scale.y,scale.z)));
         }
-        var seen=new HashSet<AABB>();
+        seen.clear();
         queries.clear();
         for(int group=0;group<radius.length;group++) if(terrain[group]) {
             var anchor=points[roots[group]];
@@ -83,7 +88,7 @@ final class GpuCollisionSnapshot {
         for(AABB query:queries) {
             for(VoxelShape shape:blocks.apply(query)) for(AABB box:shape.toAabbs())
                 if(box.getXsize()>0 && box.getYsize()>0 && box.getZsize()>0 && seen.add(box))
-                    add(new PhysCollider(box.move(-x,-y,-z)));
+                    {var rebased=box.move(-x,-y,-z);PhysCollider collider;if(terrainCursor==terrainPool.size()){collider=new PhysCollider(rebased);terrainPool.add(collider);}else{collider=terrainPool.get(terrainCursor);collider.reset(rebased);}terrainCursor++;add(collider);}
         }
         return contacts;
     }

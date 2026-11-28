@@ -12,6 +12,8 @@ uniform vec4 color;
 uniform samplerBuffer atlasLayout;
 uniform int atlasSize,atlasTriangles,atlasBand;
 uniform bool materialPass;
+uniform int outlineSteps;
+uniform vec2 outlinePixelStep;
 out vec3 position;
 out vec2 uv;
 out vec4 vertexColor;
@@ -41,6 +43,12 @@ void main() {
         uint first=uint(gl_VertexID/3)*3u;
         vec4 p0=projected(first),p1=projected(first+1u),p2=projected(first+2u);
         culled=determinant(mat3(p0.xyw,p1.xyw,p2.xyw))<=0;
+    }
+    if(outlineSteps>0 && !materialPass) {
+        int side=outlineSteps*2+1;int offset=gl_InstanceID;int center=outlineSteps*side+outlineSteps;
+        if(offset>=center)offset++;
+        gl_Position.xy+=vec2(offset%side-outlineSteps,offset/side-outlineSteps)*outlinePixelStep*gl_Position.w;
+        gl_Position.z+=.00001*gl_Position.w;
     }
     if(b.flags.y!=0 || culled) gl_Position=vec4(2,2,2,1);
 }

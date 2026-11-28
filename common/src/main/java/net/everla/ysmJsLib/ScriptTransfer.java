@@ -20,7 +20,8 @@ public final class ScriptTransfer {
         public static void handle(Request p,PacketContext c){if(!c.isClientSide() && p.hash.matches("[a-fA-F0-9]{64}"))c.enqueueWork(()->com.elfmcys.yesstevemodel.model.ServerModelManager.requestScriptExtension(c.getSender(),p.hash));}
     }
     public static void ensure(String hash) {
-        if(!serverSupportsScripts || ScriptResources.get(hash)!=null || net.minecraft.client.Minecraft.getInstance().isSameThread())return;
+        // Official binary model hashes are 32 characters and cannot identify a RYSMJS extension.
+        if(hash==null || !hash.matches("[a-fA-F0-9]{64}") || !serverSupportsScripts || ScriptResources.get(hash)!=null || net.minecraft.client.Minecraft.getInstance().isSameThread())return;
         var future=WAITING.computeIfAbsent(hash,h->{
             var f=new java.util.concurrent.CompletableFuture<Boolean>();
             net.minecraft.client.Minecraft.getInstance().execute(()->NetworkHandler.sendToServer(new Request(h)));return f;

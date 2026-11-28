@@ -18977,7 +18977,7 @@ CodeMirror.defineMIME("application/typescript", { name: "javascript", typescript
         ["register('crosses', {textures:['cross.png']})", '星空资源注册'],
         ['logKeyBindings()', '加载时列出快捷键'],
         ...['move(0, 0, 0)','rotate(0, 0, 0)','scale(1, 1, 1)'].map(text => [text, 'pose 组变换']),
-        ["game.group('group')", 'pose 选择组'], ["game.molang('query.health')", '只读 Molang 查询'],
+        ["game.group('group')", 'pose 选择组（20 TPS）'], ["game.molang('query.health')", '只读 Molang 查询'],
         ['game.model.state', '实例私有状态'], ['game.print(value)', '输出调试信息'],
         ["game.input.key('key.keyboard.escape')", '原始按键 down/pressed/released'],
         ["game.input.binding('key.inventory')", '游戏快捷键 down/pressed/released'],
@@ -19011,7 +19011,19 @@ CodeMirror.defineMIME("application/typescript", { name: "javascript", typescript
         const report=(node,message,severity='warning')=>diagnostics.push({line:node.loc.start.line-1,ch:node.loc.start.column,endLine:node.loc.end.line-1,endCh:node.loc.end.column,message,severity});
         try{ast=scriptParser.parse(source,{ecmaVersion:6,locations:true});}
         catch(error){return {diagnostics:[{line:(error.loc?.line||1)-1,ch:error.loc?.column||0,message:error.message,severity:'error'}],colors,calls};}
+        const synced=new Map();
         walk(ast,(node,context)=>{
+            if(node.type==='CallExpression'&&context?.type==='molang'&&node.callee.object?.name===context.parameter&&memberName(node.callee)==='register'&&typeof node.arguments[0]?.value==='string') {
+                const options=node.arguments[2];synced.set(node.arguments[0].value,options?.properties?.some(p=>(p.key.name??p.key.value)==='sync'&&p.value.value===true)===true);
+            }
+        });
+        walk(ast,(node,context)=>{
+            if(context?.type==='pose'&&node.type==='CallExpression'&&node.callee.object?.name===context.parameter&&memberName(node.callee)==='molang'&&typeof node.arguments[0]?.value==='string') {
+                for(const match of node.arguments[0].value.matchAll(/\brysmjs\.([a-z_][a-z_0-9]*)/g))if(synced.get(match[1])!==true)report(node.arguments[0],synced.has(match[1])?'远端 pose 的 rysmjs.'+match[1]+' 未设置 sync:true，将使用 fallback':'远端 pose 依赖 rysmjs.'+match[1]+'，请确认其声明位于其他脚本且设置 sync:true');
+            }
+            if(context?.type==='group_modifier'&&node.type==='Property'&&(node.key.name??node.key.value)==='macro'&&typeof node.value.value==='string') {
+                for(const match of node.value.value.matchAll(/\brysmjs\.([a-z_][a-z_0-9]*)/g))if(synced.get(match[1])!==true)report(node.value,'远端帧动画依赖 rysmjs.'+match[1]+'，请确认对应声明设置 sync:true');
+            }
             if(node.type==='Literal'&&node.regex)report(node,'RYSM 不支持正则表达式','error');
             if(['ImportDeclaration','ExportNamedDeclaration','ExportDefaultDeclaration'].includes(node.type))report(node,'RYSM 不支持模块导入或导出','error');
             if(node.type==='Property'&&!node.computed&&['sc','ac','color'].includes(node.key.name??node.key.value)&&node.value.type==='Literal'&&typeof node.value.value==='string') {
@@ -19025,7 +19037,12 @@ CodeMirror.defineMIME("application/typescript", { name: "javascript", typescript
                 if(method!=='model')report(node,'请使用新版 Rysm.model(event, callback)','error');
                 else {
                     if(node.arguments[0]?.type==='Literal'&&!modelEvents.includes(node.arguments[0].value))report(node.arguments[0],'未知 RYSM 事件','error');
-                    if(node.arguments.length!==2||!['ArrowFunctionExpression','FunctionExpression'].includes(node.arguments[1]?.type))report(node,'Rysm.model 需要事件名和回调函数','error');
+                    if((node.arguments.length!==2&&!(node.arguments[0]?.value==='pose'&&node.arguments.length===3))||!['ArrowFunctionExpression','FunctionExpression'].includes(node.arguments[1]?.type))report(node,'Rysm.model 需要事件名和回调函数；pose 可添加 {interpolate:true}','error');
+                    if(node.arguments.length===3&&node.arguments[0]?.value==='pose') {
+                        const options=node.arguments[2];
+                        if(options.type!=='ObjectExpression')report(options,'pose 选项需要 {interpolate:true/false}','error');
+                        else for(const p of options.properties)if((p.key.name??p.key.value)!=='interpolate'||p.value.type!=='Literal'||typeof p.value.value!=='boolean')report(p,'pose 仅接受布尔 interpolate 选项','error');
+                    }
                 }
             }
             if(!context?.parameter)return;
@@ -19108,7 +19125,7 @@ CodeMirror.defineMIME("application/typescript", { name: "javascript", typescript
         physics:'physics({kind, r, g / gw, s, a, c, air, bc, enable, disable}) · kind: "tail" 使用尾骨默认值',
         cosmic:'cosmic({effect, sc, sa, ac, aa}) · RGB 六位无 #，混色 0–100',outline:'outline({color, width}) · color: RGB / auto；width: 0–64',
         frameAnimation:'frameAnimation({count, tick}) 或 {count, macro, macroRepeat} · 帧编号从 1 开始',register:'molang: register(name, callback, {fallback:0, sync:false})；cosmic: register(name, {textures:[...]})',
-        group:'game.group(name) → move / rotate / scale，仅 pose 可用',rotate:'rotate(x, y, z) · 度数增量',move:'move(x, y, z) · 模型像素偏移',scale:'scale(x, y, z) · 倍率',
+        group:'game.group(name) → move / rotate / scale；pose 为 20 TPS，可选 {interpolate:true}',rotate:'rotate(x, y, z) · 度数增量',move:'move(x, y, z) · 模型像素偏移',scale:'scale(x, y, z) · 倍率',
         molang:'game.molang(expression) · 只读 Molang 查询',attribute:'game.entity.attribute(id, fallback=0) · 属性当前值',attributeBase:'game.entity.attributeBase(id, fallback=0) · 属性基础值'};
     function parameterHint(source,cursor) {
         const tokens=[];try{for(const t of scriptParser.tokenizer(source.slice(0,cursor),{ecmaVersion:6}))tokens.push(t);}catch{}
@@ -19290,7 +19307,7 @@ CodeMirror.defineMIME("application/typescript", { name: "javascript", typescript
     if(typeof Plugin==='undefined')return;
     function action(callback){return ()=>{try{callback();}catch(error){Blockbench.showQuickMessage(error.message);}};}
     Plugin.register('reimagined_ysm_physics_groups',{
-        title:'Reimagined YSM 编辑器',author:'Reimagined YSM contributors',icon:'tune',version:'4.1.1',variant:'both',min_version:'5.0.0',
+        title:'Reimagined YSM 编辑器',author:'Reimagined YSM contributors',icon:'tune',version:'4.1.2',variant:'both',min_version:'5.0.0',
         description:'新版 RYSM JS 组属性、离线脚本编辑器，以及编辑模式物理骨链与碰撞体积辅助。',
         onload(){
             scriptProperty=new Property(Group,'object','rysm_properties',{default:{}});

@@ -22,6 +22,9 @@ public final class GpuMesh {
     private final Set<GpuPose> poseResources = new HashSet<>();
     private boolean disposed = false;
     public GroupGpuMesh groups;
+    GpuMesh parent;
+    java.util.List<java.util.IdentityHashMap<GeoModel.BakedQuad,int[]>> faceIndices;
+    private final WeakHashMap<float[],GpuPose> localPoses=new WeakHashMap<>();
 
     GpuMesh(long pointer, int vao, int vbo, int ibo, int vertexCount, int indexCount, int boneCount, int pm1s, int pm1c, int pm2s, int pm2c, int pm3s, int pm3c) {
         this.pointer = pointer;
@@ -53,11 +56,13 @@ public final class GpuMesh {
         return self + partMask3Count;
     }
 
-    public GpuPose pose(float[] parameters) {
-        GpuPose pose = poses.get(parameters);
+    public GpuPose pose(float[] parameters) {return pose(parameters,false);}
+    public GpuPose pose(float[] parameters,boolean local) {
+        var cache=local?localPoses:poses;
+        GpuPose pose = cache.get(parameters);
         if (pose == null) {
             pose = new GpuPose(parameters, boneCount);
-            poses.put(parameters, pose);
+            cache.put(parameters, pose);
             poseResources.add(pose);
         }
         pose.touched = System.nanoTime();
@@ -71,7 +76,7 @@ public final class GpuMesh {
             GpuPose pose = iterator.next();
             float[] owner = pose.owner.get();
             if (clear || owner == null || now - pose.touched > 5_000_000_000L) {
-                if (owner != null) poses.remove(owner);
+                if (owner != null) {poses.remove(owner);localPoses.remove(owner);}
                 pose.close();
                 iterator.remove();
             }
@@ -84,11 +89,11 @@ public final class GpuMesh {
         if (disposed) return;
         disposed = true;
         if(groups!=null) groups.close();
-        GlStateManager._glDeleteBuffers(vbo);
+        if(parent==null)GlStateManager._glDeleteBuffers(vbo);
         GlStateManager._glDeleteBuffers(ibo);
         GL30.glDeleteVertexArrays(vao);
         cleanupPoses(true);
-        if (pointer != 0) {
+        if (pointer != 0 && parent==null) {
             GeoModel.nFreeGpuMesh(pointer);
         }
     }

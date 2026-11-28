@@ -29,7 +29,7 @@ public final class IrisRenderPath {
             return render(model,pose,boneParams,textureIndex,renderPartMask,packedLight,packedOverlay,r,g,b,a,textureLocation);
         } catch(Exception | LinkageError | OutOfMemoryError failure) {
             YesSteveModel.LOGGER.error("Iris GPU draw failed; using CPU pose and fallback rendering",failure);
-            net.everla.ysmPhysLib.GpuPhysics.fallback(boneParams);
+            if(model.renderSource==null)net.everla.ysmPhysLib.GpuPhysics.fallback(boneParams);
             return false;
         } finally {
             GlStateManager._glBindVertexArray(vao);
@@ -50,17 +50,7 @@ public final class IrisRenderPath {
         instance.ensureXformBuffers(mesh);
 
 
-        ByteBuffer boneBuf = instance.boneBuffer;
-        boneBuf.clear();
-        // Iris consumes model-local matrices; the entity shader applies pose once.
-        int physicsBuffer=net.everla.ysmPhysLib.GpuPhysics.render(boneParams,new Matrix4f(),packedLight);
-        if(physicsBuffer==0) {
-            float[] cpuParams=net.everla.ysmPhysLib.PlayerPhysics.hideEndpoints(model,boneParams);
-            GeoModel.nComputeBoneMatricesLocal(mesh.pointer,cpuParams,packedLight,boneBuf);
-            GpuRenderPath.updateBoneVisibility(model.bakedBones,cpuParams,boneBuf);
-            boneBuf.position(0);boneBuf.limit(mesh.boneCount*144);
-            instance.uploadBones();
-        }
+        int physicsBuffer=GpuRenderPath.prepareBones(model,boneParams,new Matrix4f(),new org.joml.Matrix3f(),packedLight,true);
 
         GlStateManager._glUseProgram(BoneXformCompute.program());
         if (BoneXformCompute.locColor() >= 0) GL20.glUniform4f(BoneXformCompute.locColor(), r, g, b, a);
@@ -73,11 +63,11 @@ public final class IrisRenderPath {
 
         GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, 0, mesh.vbo);
         GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, 1, instance.xformVbo());
-        GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, 2, physicsBuffer==0?instance.boneSsbo:physicsBuffer);
+        GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, 2, physicsBuffer);
 
         // Repeated shadow/main draws of this instance may still be consuming its output.
         GL43.glMemoryBarrier(GL43.GL_SHADER_STORAGE_BARRIER_BIT);
-        GL43.glDispatchCompute(BoneXformCompute.dispatchGroupCount(mesh.vertexCount), 1, 1);
+        RenderMetrics.add("ordinaryDispatches",1);GL43.glDispatchCompute(BoneXformCompute.dispatchGroupCount(mesh.vertexCount), 1, 1);
 
         GL43.glMemoryBarrier(GL43.GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT | GL43.GL_SHADER_STORAGE_BARRIER_BIT);
         checkError("vertex transform");

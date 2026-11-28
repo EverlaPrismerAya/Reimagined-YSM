@@ -129,11 +129,18 @@ final class GpuPhysKernel implements AutoCloseable {
     }
 
     private void uploadAnimation(float[] parameters) {
-        inputData.clear();
-        for(int instance=0;instance<instances;instance++) for(int i:model.original)
-            for(int j=0;j<12;j++) inputData.putFloat(parameters[i*12+j]);
-        inputData.flip();GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER,input);
-        GL15.glBufferSubData(GL43.GL_SHADER_STORAGE_BUFFER,0,inputData);
+        GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER,input);
+        for(int instance=0;instance<instances;instance++) {
+            for(int sorted:model.uploadOrder)for(int j=0;j<12;j++)inputData.putFloat((instance*model.original.length+sorted)*48+j*4,parameters[model.original[sorted]*12+j]);
+            for(int cursor=0;cursor<model.uploadOrder.length;) {
+                int first=model.uploadOrder[cursor],end=first+1;cursor++;
+                while(cursor<model.uploadOrder.length&&model.uploadOrder[cursor]==end){end++;cursor++;}
+                int begin=(instance*model.original.length+first)*48,limit=(instance*model.original.length+end)*48;
+                inputData.clear().position(begin).limit(limit);GL15.glBufferSubData(GL43.GL_SHADER_STORAGE_BUFFER,begin,inputData);
+                net.everla.reimaginedysm.gpu.RenderMetrics.add("physicsUploadBytes",limit-begin);
+            }
+            inputData.clear();
+        }
     }
 
     void matrices(float[] parameters,Matrix4f renderRoot,int light) {
@@ -152,8 +159,9 @@ final class GpuPhysKernel implements AutoCloseable {
     private void dispatch() {
         // Do not overwrite matrices while a previous pass still reads this instance.
         GL42.glMemoryBarrier(GL43.GL_SHADER_STORAGE_BARRIER_BIT);
-        GL43.glDispatchCompute((instances*model.trees+LANES-1)/LANES,1,1);
+        net.everla.reimaginedysm.gpu.RenderMetrics.add("physicsDispatches",1);GL43.glDispatchCompute((instances*model.trees+LANES-1)/LANES,1,1);
         GL42.glMemoryBarrier(GL43.GL_SHADER_STORAGE_BARRIER_BIT);
+        net.everla.reimaginedysm.gpu.GpuPose.changed(output);
         int error=GL11.glGetError();
         if(error!=GL11.GL_NO_ERROR) throw new IllegalStateException("OpenGL compute error 0x"+Integer.toHexString(error));
     }
@@ -167,6 +175,7 @@ final class GpuPhysKernel implements AutoCloseable {
 
     @Override public void close() {
         if(closed) return;closed=true;
+        net.everla.reimaginedysm.gpu.GpuPose.forget(output);
         GL15.glDeleteBuffers(input);GL15.glDeleteBuffers(state);GL15.glDeleteBuffers(output);GL15.glDeleteBuffers(contacts);
         MemoryUtil.memFree(inputData);MemoryUtil.memFree(contactData);
     }

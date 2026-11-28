@@ -9,6 +9,13 @@ import java.nio.ByteBuffer;
 
 /** Mutable draw data belongs to one animated instance, never to shared geometry. */
 public final class GpuPose implements AutoCloseable {
+    private static final java.util.Map<Integer,Long> versions=new java.util.HashMap<>();
+    private static long versionCounter;
+    public static void changed(int buffer){versions.put(buffer,++versionCounter);}
+    public static long version(int buffer){return versions.getOrDefault(buffer,0L);}
+    public static void forget(int buffer){versions.remove(buffer);}
+    public int surfacePart=-1,surfaceBoneBuffer;
+    public long surfaceVersion=-1;
     final WeakReference<float[]> owner;
     long touched = System.nanoTime();
     public final int boneSsbo;
@@ -17,6 +24,13 @@ public final class GpuPose implements AutoCloseable {
     private int groupVbo,groupVao;
     public int surfaceSolids,surfaceNeighbors;
     private boolean closed;
+    private float[] preparedParameters;
+    private final org.joml.Matrix4f preparedRoot=new org.joml.Matrix4f();
+    private final org.joml.Matrix3f preparedNormal=new org.joml.Matrix3f();
+    private int preparedLight;
+    public boolean prepared(float[] parameters,org.joml.Matrix4f root,org.joml.Matrix3f normal,int light){return preparedParameters!=null&&preparedLight==light&&preparedRoot.equals(root)&&preparedNormal.equals(normal)&&java.util.Arrays.equals(parameters,preparedParameters);}
+    public void preparedNow(float[] parameters,org.joml.Matrix4f root,org.joml.Matrix3f normal,int light){if(preparedParameters==null)preparedParameters=new float[parameters.length];System.arraycopy(parameters,0,preparedParameters,0,parameters.length);preparedRoot.set(root);preparedNormal.set(normal);preparedLight=light;}
+
 
     GpuPose(float[] parameters, int boneCount) {
         owner = new WeakReference<>(parameters);
@@ -33,12 +47,15 @@ public final class GpuPose implements AutoCloseable {
 
     public void ensureSurfaceBuffers(GroupGpuMesh mesh) {
         if(surfaceSolids!=0)return;
-        long words=(mesh.solidCount+31L)/32,bytes=Math.max(4,mesh.solidCount*words*4);
-        if(bytes>GL32.glGetInteger64(GL43.GL_MAX_SHADER_STORAGE_BLOCK_SIZE))throw new IllegalStateException("GPU surface adjacency exceeds device storage limit");
+        long bytes=Math.max(64L,mesh.bvh.size()*64L);
+        if(bytes>Integer.MAX_VALUE || Math.max(bytes,mesh.solidCount*144L)>GL32.glGetInteger64(GL43.GL_MAX_SHADER_STORAGE_BLOCK_SIZE))throw new IllegalStateException("GPU surface BVH exceeds device storage limit");
+        try {
         surfaceSolids=GL15.glGenBuffers();GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER,surfaceSolids);
-        GL15.glBufferData(GL43.GL_SHADER_STORAGE_BUFFER,Math.max(144L,mesh.solidCount*144L),GL15.GL_DYNAMIC_DRAW);
+        GL15.glBufferData(GL43.GL_SHADER_STORAGE_BUFFER,Math.max(144L,mesh.solidCount*144L),GL15.GL_DYNAMIC_DRAW);ShaderUtil.requireBuffer(GL43.GL_SHADER_STORAGE_BUFFER,Math.max(144L,mesh.solidCount*144L));
         surfaceNeighbors=GL15.glGenBuffers();GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER,surfaceNeighbors);
-        GL15.glBufferData(GL43.GL_SHADER_STORAGE_BUFFER,bytes,GL15.GL_DYNAMIC_DRAW);
+        var topology=MemoryUtil.memCalloc((int)bytes);
+        try{mesh.bvh.write(topology);topology.flip();GL15.glBufferData(GL43.GL_SHADER_STORAGE_BUFFER,topology,GL15.GL_DYNAMIC_DRAW);ShaderUtil.requireBuffer(GL43.GL_SHADER_STORAGE_BUFFER,topology.remaining());}finally{MemoryUtil.memFree(topology);}
+        }catch(RuntimeException|Error failure){if(surfaceSolids!=0)GL15.glDeleteBuffers(surfaceSolids);if(surfaceNeighbors!=0)GL15.glDeleteBuffers(surfaceNeighbors);surfaceSolids=surfaceNeighbors=0;throw failure;}
     }
 
     public void ensureGroupBuffers(GroupGpuMesh mesh) {
@@ -60,7 +77,7 @@ public final class GpuPose implements AutoCloseable {
         // instance (shadow, translucent pass or the next frame). Orphan storage
         // before uploading so the driver retains that draw's complete matrices.
         GL15.glBufferData(GL43.GL_SHADER_STORAGE_BUFFER, boneBuffer.capacity(), GL15.GL_STREAM_DRAW);
-        GL15.glBufferSubData(GL43.GL_SHADER_STORAGE_BUFFER, 0L, boneBuffer);
+        GL15.glBufferSubData(GL43.GL_SHADER_STORAGE_BUFFER, 0L, boneBuffer);changed(boneSsbo);
     }
 
     public void ensureXformBuffers(GpuMesh mesh) {
@@ -90,7 +107,7 @@ public final class GpuPose implements AutoCloseable {
     @Override public void close() {
         if (closed) return;
         closed = true;
-        GlStateManager._glDeleteBuffers(boneSsbo);
+        forget(boneSsbo);GlStateManager._glDeleteBuffers(boneSsbo);
         if (xformVbo != 0) GlStateManager._glDeleteBuffers(xformVbo);
         if (xformVao != 0) GL30.glDeleteVertexArrays(xformVao);
         if(surfaceSolids!=0)GL15.glDeleteBuffers(surfaceSolids);

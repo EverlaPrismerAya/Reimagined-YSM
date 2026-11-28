@@ -14,6 +14,11 @@ public class ReimaginedYSMClientCommand {
                 .requires(source -> true);
 
         root.then(CacheCommand.register());
+        root.then(LiteralArgumentBuilder.<ClientCommandRegistrationEvent.ClientCommandSourceStack>literal("performance").executes(context -> {
+            var mc=net.minecraft.client.Minecraft.getInstance();
+            String text=net.everla.reimaginedysm.gpu.RenderMetrics.ENABLED?net.everla.reimaginedysm.gpu.RenderMetrics.snapshot().toString():"Performance counters are disabled. Start with -Drysm.renderMetrics=true";
+            mc.gui.getChat().addMessage(net.minecraft.network.chat.Component.literal(text));return 1;
+        }).then(LiteralArgumentBuilder.<ClientCommandRegistrationEvent.ClientCommandSourceStack>literal("reset").executes(context->{net.everla.reimaginedysm.gpu.RenderMetrics.clear();return 1;})));
         root.then(LiteralArgumentBuilder.<ClientCommandRegistrationEvent.ClientCommandSourceStack>literal("keys").executes(context -> {
             var mc=net.minecraft.client.Minecraft.getInstance();
             for(var key:mc.options.keyMappings)mc.gui.getChat().addMessage(net.minecraft.network.chat.Component.literal(key.getName()+" = "+key.getTranslatedKeyMessage().getString()));

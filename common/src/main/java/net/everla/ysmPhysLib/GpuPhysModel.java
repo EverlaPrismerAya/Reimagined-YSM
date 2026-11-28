@@ -9,6 +9,7 @@ import java.nio.ByteBuffer;
 final class GpuPhysModel implements AutoCloseable {
     final PhysDefinition definition;
     final int[] original, sorted, island;
+    final int[] uploadOrder;
     final boolean[] affected;
     final int trees;
     final int buffer;
@@ -49,7 +50,7 @@ final class GpuPhysModel implements AutoCloseable {
         for(int i=0;i<trees*4;i++) traversal.add(0);
         for(int tree=0;tree<trees;tree++) {
             boolean[] needed=new boolean[original.length],simulation=new boolean[original.length];
-            for(int i:original) if(island[i]==tree || tree==0 && island[i]<0) {
+            for(int i:original) if(island[i]==tree || !definition.islandView && tree==0 && island[i]<0) {
                 for(int cursor=i;cursor>=0 && !needed[cursor];cursor=definition.bones.get(cursor).parentIdx) needed[cursor]=true;
             }
             for(int i:original) if(island[i]==tree && (definition.jointByBone[i]!=null || ends[i])) {
@@ -67,6 +68,7 @@ final class GpuPhysModel implements AutoCloseable {
                 traversal.set(tree*4+3,traversal.size());
             }
         }
+        uploadOrder=traversal.subList(trees*4,traversal.size()).stream().mapToInt(Integer::intValue).distinct().sorted().toArray();
         ByteBuffer data=MemoryUtil.memCalloc(original.length*80);
         try {
             for(int i:original) {

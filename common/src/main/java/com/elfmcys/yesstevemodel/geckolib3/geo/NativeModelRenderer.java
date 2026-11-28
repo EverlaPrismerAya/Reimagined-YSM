@@ -77,6 +77,8 @@ public class NativeModelRenderer {
             float[] stateBuffer, int textureIndex, int renderPartMask, int packedLight, int packedOverlay,
             float red, float green, float blue, float alpha, net.minecraft.resources.ResourceLocation textureLocation,
             com.elfmcys.yesstevemodel.geckolib3.core.AnimatableEntity<?> animatable, float partialTick) {
+        long started=net.everla.reimaginedysm.gpu.RenderMetrics.ENABLED?System.nanoTime():0;
+        int timer=net.everla.reimaginedysm.gpu.RenderMetrics.beginGpu();
         FrameContext previous = FRAME_CONTEXT.get();
         if (model.hasFrameAnimations) FRAME_CONTEXT.set(new FrameContext(
                 animatable == null ? 0 : animatable.getEntity().tickCount + (double) partialTick,
@@ -86,6 +88,8 @@ public class NativeModelRenderer {
                     packedLight, packedOverlay, red, green, blue, alpha, textureLocation);
         } finally {
             if (previous == null) FRAME_CONTEXT.remove(); else FRAME_CONTEXT.set(previous);
+            net.everla.reimaginedysm.gpu.RenderMetrics.endGpu(timer);
+            if(started!=0)net.everla.reimaginedysm.gpu.RenderMetrics.time("renderCpu",System.nanoTime()-started);
         }
     }
 
@@ -95,6 +99,25 @@ public class NativeModelRenderer {
         OculusCompat.updatePBRState();
         RenderSystem.getProjectionMatrix().mul(RenderSystem.getModelViewMatrix(), projectionModelViewMatrix);
         boolean isPreview = isPreview();
+
+        if(model.renderSource==null && textureLocation!=null && buffer instanceof BufferBuilder
+                && model.bakedBones!=null && (model.hasGroupStyles || model.isTranslucentTexture(textureIndex))) {
+            try(var scope=GroupEffectRenderer.coordinate()) {
+            var slices=model.renderPartition().texture(textureIndex,!OculusCompat.isShaderPackInUse()
+                    && NativeLibLoader.isLoaded() && GpuCapability.isAvailable());
+            var prepared=new java.util.IdentityHashMap<GeoModel,Boolean>();
+            for(var range:slices.effectsInOrder())prepared.put(range,GroupEffectRenderer.prepare(range,boneParams,textureLocation));
+            for(var range:slices.outlinesInOrder())prepared.put(range,GroupEffectRenderer.prepare(range,boneParams,textureLocation));
+            if(slices.ordinaryFaces()>0)renderMeshCurrent(buffer,pose,slices.ordinary(),boneParams,stateBuffer,textureIndex,renderPartMask,packedLight,packedOverlay,red,green,blue,alpha,textureLocation);
+            for(var range:slices.effectsInOrder())if(prepared.get(range))GroupEffectRenderer.renderPass(pose,range,boneParams,stateBuffer,textureIndex,renderPartMask,packedLight,packedOverlay,red,green,blue,alpha,textureLocation,isPreview,1);
+            for(var range:slices.outlinesInOrder())if(prepared.get(range))GroupEffectRenderer.renderPass(pose,range,boneParams,stateBuffer,textureIndex,renderPartMask,packedLight,packedOverlay,red,green,blue,alpha,textureLocation,isPreview,0);
+            if(model.isTranslucentTexture(textureIndex))for(var range:slices.effectsInOrder())if(prepared.get(range))GroupEffectRenderer.renderPass(pose,range,boneParams,stateBuffer,textureIndex,renderPartMask,packedLight,packedOverlay,red,green,blue,alpha,textureLocation,isPreview,2);
+            for(var range:slices.effectsInOrder())if(!prepared.get(range))renderModel(buffer,pose,projectionModelViewMatrix,OptiFineDetector.isOptifinePresent(),range,boneParams,stateBuffer,textureIndex,renderPartMask,packedLight,packedOverlay,red,green,blue,alpha,isPreview);
+            net.everla.reimaginedysm.gpu.RenderMetrics.add("ordinaryFaces",slices.ordinaryFaces());
+            net.everla.reimaginedysm.gpu.RenderMetrics.add("effectFaces",slices.effectFaces());
+            return;
+            }
+        }
 
         if (textureLocation != null && buffer instanceof BufferBuilder
                 && (model.hasGroupStyles || model.isTranslucentTexture(textureIndex))) {
@@ -130,8 +153,10 @@ public class NativeModelRenderer {
             }
         }
 
+        if(model.overlayOnly)return;
+        if(model.renderSource!=null && model.nativeModelHandle==0 && NativeLibLoader.isLoaded())model.buildNativeCache();
         // A GUI draw uses the restored animation without resetting the world's GPU solver.
-        if (!isPreview) net.everla.ysmPhysLib.GpuPhysics.fallback(boneParams);
+        if (!isPreview && model.renderSource==null) net.everla.ysmPhysLib.GpuPhysics.fallback(boneParams);
         boneParams=net.everla.ysmPhysLib.PlayerPhysics.hideEndpoints(model,boneParams);
         if (NativeLibLoader.isLoaded() && !com.elfmcys.yesstevemodel.config.ClientConfigScope.effective(GeneralConfig.USE_COMPATIBILITY_RENDERER).get()) { // WIP: SIMD MODEL RENDER
             nativeRenderModel(
@@ -228,16 +253,18 @@ public class NativeModelRenderer {
         Vector3f tempNorm = new Vector3f();
         Matrix4f[] boneLocalTransforms = new Matrix4f[mesh.bakedBones.size()];
         boolean[] boneVisible = new boolean[mesh.bakedBones.size()];
-
-        if (!dynamicOnly) {
-            for (int i = 0; i < mesh.bakedBones.size(); i++) {
-                calculateBoneMatrix(i, mesh.bakedBones, boneParams, boneLocalTransforms, boneVisible,
-                        identityMat, stateBuffer, modelToCamera);
+        if(!isPreview) {
+            boolean[] needed=new boolean[boneVisible.length];
+            for(int i=0;i<needed.length;i++){var bone=mesh.bakedBones.get(i);needed[i]=!bone.facingCameraSubtree&&!bone.cubes.isEmpty()&&(!dynamicOnly||bone.dynamicGeometry())&&(renderPartMask==0||bone.partMask==renderPartMask||bone.partMask==3);}
+            if(net.everla.ysmPhysLib.GpuPhysics.readRenderMatrices(boneParams,rootPoseMat,packedLight,boneLocalTransforms,boneVisible,needed)) {
+                Matrix4f inverse=new Matrix4f(rootPoseMat).invert();
+                for(int i=0;i<needed.length;i++)if(needed[i]&&boneLocalTransforms[i]!=null)boneLocalTransforms[i]=new Matrix4f(inverse).mul(boneLocalTransforms[i]);
             }
         }
+
         for (int i = 0; i < mesh.bakedBones.size(); i++) {
             GeoModel.BakedBone bone = mesh.bakedBones.get(i);
-            if (dynamicOnly && !bone.dynamicGeometry()) continue;
+            if (dynamicOnly && !bone.dynamicGeometry() || bone.cubes.isEmpty() && boneParams[i*12+11]==0) continue;
             if (renderPartMask != 0 && bone.partMask != renderPartMask && bone.partMask != 3) continue;
             calculateBoneMatrix(i, mesh.bakedBones, boneParams, boneLocalTransforms, boneVisible,
                     identityMat, stateBuffer, modelToCamera);
@@ -253,6 +280,7 @@ public class NativeModelRenderer {
 
             int currentPackedLight = bone.glow ? LightTexture.pack(15, 15) : packedLight;
 
+            if(dynamicOnly)net.everla.reimaginedysm.gpu.RenderMetrics.add("cpuDynamicFaces",bone.cubes.stream().mapToInt(c->c.quads.size()).sum());
             float frameV = frameOffset(bone);
             for (GeoModel.BakedCube cube : bone.cubes) {
                 for (GeoModel.BakedQuad quad : cube.quads) {

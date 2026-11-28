@@ -19,6 +19,8 @@ import net.minecraft.client.KeyMapping;
 
 public final class ClientSetupEvent {
 
+    private static Object performanceWorld;
+
     private ClientSetupEvent() {
     }
 
@@ -28,8 +30,13 @@ public final class ClientSetupEvent {
         }
         registerKeyMappings();
         dev.architectury.event.events.client.ClientTickEvent.CLIENT_POST.register(client -> {
+            if(performanceWorld!=client.level) {
+                if(performanceWorld!=null){net.everla.ysmPhysLib.GpuPhysics.shutdown();net.everla.reimaginedysm.gpu.GpuRenderPath.shutdown();com.elfmcys.yesstevemodel.geckolib3.geo.GroupEffectRenderer.shutdown();}
+                performanceWorld=client.level;
+            }
             net.everla.ysmPhysLib.GpuPhysics.tick();
             net.everla.reimaginedysm.gpu.GpuRenderPath.tick();
+            net.everla.ysmJsLib.CosmicTextures.tick();
         });
         ClientLifecycleEvent.CLIENT_STOPPING.register(client -> {
             net.everla.ysmPhysLib.GpuPhysics.shutdown();

@@ -61,6 +61,23 @@ public final class ShaderUtil {
         }
         return prog;
     }
+    public static void requireBuffer(int target,long bytes){
+        int error=GL11.glGetError();long actual=GL32.glGetBufferParameteri64(target,GL15.GL_BUFFER_SIZE);
+        if(error!=GL11.GL_NO_ERROR||actual!=bytes)throw new IllegalStateException("GPU buffer allocation failed: requested "+bytes+", allocated "+actual+", error 0x"+Integer.toHexString(error));
+    }
+    /** Raw RGBA arrays are tightly packed, independent of NativeImage's last upload. */
+    public static final class SavedPixelUnpackState implements AutoCloseable {
+        private static final int[] PARAMETERS={GL11.GL_UNPACK_ALIGNMENT,GL11.GL_UNPACK_ROW_LENGTH,
+                GL11.GL_UNPACK_SKIP_PIXELS,GL11.GL_UNPACK_SKIP_ROWS,GL12.GL_UNPACK_IMAGE_HEIGHT,GL12.GL_UNPACK_SKIP_IMAGES};
+        private final int[] previous=new int[PARAMETERS.length];
+        public SavedPixelUnpackState() {
+            for(int i=0;i<PARAMETERS.length;i++) {
+                previous[i]=GL11.glGetInteger(PARAMETERS[i]);
+                GL11.glPixelStorei(PARAMETERS[i],i==0?1:0);
+            }
+        }
+        public void close(){for(int i=0;i<PARAMETERS.length;i++)GL11.glPixelStorei(PARAMETERS[i],previous[i]);}
+    }
     /** Preserve indexed ranges, generic SSBO binding and the caller's GL program. */
     public static class SavedComputeState implements AutoCloseable {
         private final int program=GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);

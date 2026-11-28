@@ -4,7 +4,7 @@ Rysm.model('molang', event => {
     // 根据当前血量计算，避免除以零。失败时返回 fallback。
     event.register('health_ratio', game => {
         return game.entity.health / Math.max(game.entity.maxHealth, 1);
-    }, {fallback: 1});
+    }, {fallback: 1, sync: true});
 
     // game 是运行时上下文，后续参数来自动画中的函数调用。
     // 带数值参数的算法不能设置 sync:true。
@@ -12,11 +12,11 @@ Rysm.model('molang', event => {
     event.register('sum', (game, a, b) => (a || 0) + (b || 0), {fallback: 0});
 
     // 读取已有的只读 Molang 查询，不修改游戏或动画变量。
-    event.register('movement', game => game.molang('rysm.longitudinal_speed'), {fallback: 0});
+    event.register('movement', game => game.molang('rysm.longitudinal_speed'), {fallback: 0, sync: true});
 
     // 帧动画宏从 1 开始编号。这里每秒产生 1/2/3/4。
     // macro_panel 只有两帧且 macroRepeat:false，超过 2 后保持末帧。
-    event.register('frame', game => 1 + Math.floor(game.time.seconds) % 4, {fallback: 1});
+    event.register('frame', game => 1 + Math.floor(game.time.seconds) % 4, {fallback: 1, sync: true});
 
     // state 属于当前模型实例，由 events.js 的 tick 事件更新。
     // sync:true 让其他玩家读取所属玩家的结果，而非读取他们自己的键盘。

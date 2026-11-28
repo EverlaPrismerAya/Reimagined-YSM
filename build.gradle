@@ -107,3 +107,10 @@ subprojects {
         }
     }
 }
+
+// The Python runner launches isolated Gradle/client processes; no recursive task dependency.
+tasks.register('performanceAcceptance', Exec) {
+    group = 'verification'
+    description = 'Run RYSM acceptance checks, isolated GameTests and automated clients.'
+    commandLine providers.gradleProperty('acceptancePython').getOrElse('python'), rootProject.file('tests/acceptance/run.py'), '--root', rootDir.absolutePath
+}

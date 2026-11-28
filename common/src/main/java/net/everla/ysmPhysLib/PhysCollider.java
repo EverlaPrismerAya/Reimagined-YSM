@@ -10,23 +10,18 @@ public final class PhysCollider {
     private record Face(Vector3f a, Vector3f b, Vector3f c, Vector3f d, Vector3f normal) {}
     private final List<Face> faces=new ArrayList<>();
     private final Vector3f min=new Vector3f(Float.POSITIVE_INFINITY), max=new Vector3f(Float.NEGATIVE_INFINITY);
-    final boolean worldBlock;
-
+    boolean worldBlock;
+    private final List<Face> facePool=new ArrayList<>();
+    private Vector3f[] pointPool=new Vector3f[0];
+    private final Vector3f centerScratch=new Vector3f(),edgeScratch=new Vector3f();
+    private static final int[][] BOX_FACES={{0,1,3,2},{4,5,7,6},{0,2,6,4},{1,3,7,5},{0,1,5,4},{2,3,7,6}};
+    private Face face(int i){while(facePool.size()<=i)facePool.add(new Face(new Vector3f(),new Vector3f(),new Vector3f(),new Vector3f(),new Vector3f()));return facePool.get(i);}
+    private void corner(Vector3f target,int bits){target.set((bits&1)==0?min.x:max.x,(bits&2)==0?min.y:max.y,(bits&4)==0?min.z:max.z);}
     /** World VoxelShape box, already rebased in double precision near the player. */
-    public PhysCollider(net.minecraft.world.phys.AABB box) {
-        worldBlock=true;
-        min.set((float)box.minX,(float)box.minY,(float)box.minZ);
-        max.set((float)box.maxX,(float)box.maxY,(float)box.maxZ);
-        Vector3f a=new Vector3f(min.x,min.y,min.z), b=new Vector3f(max.x,min.y,min.z),
-                c=new Vector3f(max.x,max.y,min.z), d=new Vector3f(min.x,max.y,min.z),
-                e=new Vector3f(min.x,min.y,max.z), f=new Vector3f(max.x,min.y,max.z),
-                g=new Vector3f(max.x,max.y,max.z), h=new Vector3f(min.x,max.y,max.z);
-        faces.add(new Face(a,b,c,d,new Vector3f(0,0,-1)));
-        faces.add(new Face(e,f,g,h,new Vector3f(0,0,1)));
-        faces.add(new Face(a,d,h,e,new Vector3f(-1,0,0)));
-        faces.add(new Face(b,c,g,f,new Vector3f(1,0,0)));
-        faces.add(new Face(a,b,f,e,new Vector3f(0,-1,0)));
-        faces.add(new Face(d,c,g,h,new Vector3f(0,1,0)));
+    public PhysCollider(net.minecraft.world.phys.AABB box){reset(box);}
+    void reset(net.minecraft.world.phys.AABB box) {
+        worldBlock=true;faces.clear();min.set((float)box.minX,(float)box.minY,(float)box.minZ);max.set((float)box.maxX,(float)box.maxY,(float)box.maxZ);
+        for(int i=0;i<6;i++){var f=face(i);var corners=BOX_FACES[i];corner(f.a,corners[0]);corner(f.b,corners[1]);corner(f.c,corners[2]);corner(f.d,corners[3]);f.normal.set(0,0,0);f.normal.setComponent(i<2?2:i<4?0:1,i%2==0?-1:1);faces.add(f);}
     }
 
     /** std430 Collider: bounds, face count, six complete quads (no geometry truncation). */
@@ -188,23 +183,17 @@ public final class PhysCollider {
         return new Vector3f[]{new Vector3f(p).fma(s,u),new Vector3f(a).fma(t,v)};
     }
 
-    public PhysCollider(float[] vertices, Matrix4f transform) {
-        worldBlock=false;
-        List<Vector3f> points=new ArrayList<>();
-        Vector3f center=new Vector3f();
-        for(int i=0;i+2<vertices.length;i+=3) {
-            Vector3f p=transform.transformPosition(new Vector3f(vertices[i],vertices[i+1],vertices[i+2]));
-            points.add(p);center.add(p);min.min(p);max.max(p);
-        }
-        if(points.isEmpty()) return;
-        center.div(points.size());
-        for(int i=0;i+3<points.size();i+=4) {
-            Vector3f a=points.get(i),b=points.get(i+1),c=points.get(i+2),d=points.get(i+3);
-            Vector3f normal=new Vector3f(b).sub(a).cross(new Vector3f(c).sub(a));
-            if(normal.lengthSquared()<1e-15f) continue;
-            normal.normalize();
-            if(normal.dot(new Vector3f(center).sub(a))>0) normal.negate();
-            faces.add(new Face(a,b,c,d,normal));
+    public PhysCollider(float[] vertices, Matrix4f transform){reset(vertices,transform);}
+    void reset(float[] vertices,Matrix4f transform) {
+        worldBlock=false;faces.clear();min.set(Float.POSITIVE_INFINITY);max.set(Float.NEGATIVE_INFINITY);centerScratch.zero();
+        int count=vertices.length/3;
+        if(pointPool.length<count){int old=pointPool.length;pointPool=java.util.Arrays.copyOf(pointPool,count);for(int i=old;i<count;i++)pointPool[i]=new Vector3f();}
+        for(int i=0;i<count;i++){var p=transform.transformPosition(pointPool[i].set(vertices[i*3],vertices[i*3+1],vertices[i*3+2]));centerScratch.add(p);min.min(p);max.max(p);}
+        if(count==0)return;centerScratch.div(count);
+        for(int i=0;i+3<count;i+=4) {
+            var f=face(i/4);f.a.set(pointPool[i]);f.b.set(pointPool[i+1]);f.c.set(pointPool[i+2]);f.d.set(pointPool[i+3]);
+            f.normal.set(f.b).sub(f.a).cross(edgeScratch.set(f.c).sub(f.a));if(f.normal.lengthSquared()<1e-15f)continue;f.normal.normalize();
+            if(f.normal.dot(edgeScratch.set(centerScratch).sub(f.a))>0)f.normal.negate();faces.add(f);
         }
     }
 

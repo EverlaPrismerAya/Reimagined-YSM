@@ -24,6 +24,8 @@ public final class PhysSimulation {
     private boolean[] enabled;
     private boolean hybrid;
     private float[] base;
+    private final Matrix4f[] animatedMatrices,actualMatrices;
+    private final boolean[] visibleScratch,childrenScratch;
     private Matrix4f currentRoot;
     private boolean applied;
     private double lastTime=Double.NaN, accumulator;
@@ -46,6 +48,8 @@ public final class PhysSimulation {
         this.definition=definition;
         activeJoints=definition.joints;
         int count=definition.bones.size();
+        animatedMatrices=new Matrix4f[count];actualMatrices=new Matrix4f[count];visibleScratch=new boolean[count];childrenScratch=new boolean[count];
+        java.util.Arrays.setAll(animatedMatrices,i->new Matrix4f());java.util.Arrays.setAll(actualMatrices,i->new Matrix4f());
         tailPhase=new float[count];
         positions=new Vector3f[count];velocities=new Vector3f[count];targets=new Vector3f[count];rotations=new Quaternionf[count];
         for(int i=0;i<count;i++) {positions[i]=new Vector3f();velocities[i]=new Vector3f();targets[i]=new Vector3f();rotations[i]=new Quaternionf();}
@@ -165,7 +169,7 @@ public final class PhysSimulation {
         // Apply the existing correction to that draw without rebasing/resetting
         // particles, clearing frame velocity, or replacing simulation targets.
         if(initialized && time==lastTime && currentWorld==world && !projectHandoffDisplay) {
-            base=parameters.clone();
+            if(base==null)base=new float[parameters.length];System.arraycopy(parameters,0,base,0,parameters.length);
             reconstruct(parameters);
             applied=true;
             return;
@@ -178,15 +182,15 @@ public final class PhysSimulation {
             for(var joint:activeJoints) System.arraycopy(displayed,joint.bone()*12,parameters,joint.bone()*12,3);
             applied=true;return;
         }
-        base=parameters.clone();
+        if(base==null)base=new float[parameters.length];System.arraycopy(parameters,0,base,0,parameters.length);
         currentRoot=root;
         if(!root.isFinite() || Math.abs(root.determinant())<1e-12f) {invalidate();return;}
-        Matrix4f[] matrices=new Matrix4f[positions.length];
-        for(int i:definition.order) {
+        Matrix4f[] matrices=animatedMatrices;
+        for(int i:definition.workOrder) {
             int parent=definition.bones.get(i).parentIdx;
-            matrices[i]=RenderUtils.prepMatrixForBone(definition.bones.get(i),new Matrix4f(parent<0?root:matrices[parent]),base,i*12);
+            matrices[i]=RenderUtils.prepMatrixForBone(definition.bones.get(i),matrices[i].set(parent<0?root:matrices[parent]),base,i*12);
         }
-        for(int i=0;i<targets.length;i++) matrices[i].transformPosition(definition.pivot(i),targets[i]);
+        for(int i:definition.workOrder) matrices[i].transformPosition(definition.pivot(i),targets[i]);
         Vector3f shift=new Vector3f((float)(originX-x),(float)(originY-y),(float)(originZ-z));
         boolean reset=!initialized || world!=currentWorld || !Double.isFinite(time) || time<lastTime || time-lastTime>.25 || shift.lengthSquared()>16;
         if(initialized && !reset) {
@@ -205,7 +209,9 @@ public final class PhysSimulation {
         if(!reset && !paused && elapsed>1e-9) frameVelocity.set(shift).mul((float)(-1/elapsed));
         else frameVelocity.zero();
         lastTime=time;
-        if(reset || !paused && elapsed>0) {
+        if(!reset && !paused && elapsed>0) accumulator=Math.min(accumulator+elapsed,stepSeconds*8.0);
+        // Contact geometry is consumed only by solver steps, not display interpolation.
+        if(reset || !paused && accumulator+1e-9>=stepSeconds) {
             this.blockCollisions=blockCollisions;
             blockContacts.clear();colliders.clear();
             boolean[] visible=visibility(base);
@@ -215,7 +221,7 @@ public final class PhysSimulation {
                 // The authored rest pose may already overlap a body or terrain.
                 constrain();
                 for(var joint:activeJoints) previousRotations[joint.bone()].set(rotations[joint.bone()]);
-            } else accumulator=Math.min(accumulator+elapsed,stepSeconds*8.0);
+            }
             for(int step=0;!reset && step<8 && accumulator+1e-9>=stepSeconds;step++) {
                 stepsInUpdate++;
                 for(var joint:activeJoints) previousRotations[joint.bone()].set(rotations[joint.bone()]);
@@ -249,8 +255,8 @@ public final class PhysSimulation {
     }
 
     private boolean[] visibility(float[] p) {
-        boolean[] visible=new boolean[positions.length], children=new boolean[positions.length];
-        for(int i:definition.order) {
+        boolean[] visible=visibleScratch, children=childrenScratch;
+        for(int i:definition.workOrder) {
             int parent=definition.bones.get(i).parentIdx;
             boolean ancestor=parent<0 || children[parent];
             boolean scaled=p[i*12+6]!=0 && p[i*12+7]!=0 && p[i*12+8]!=0;
@@ -321,8 +327,8 @@ public final class PhysSimulation {
 
     /** Project only CPU display after GPU handoff; persistent integration state is untouched. */
     private void projectDisplayedContacts(float[] output,Matrix4f root) {
-        Matrix4f[] actual=new Matrix4f[positions.length];
-        for(int i:definition.order) {
+        Matrix4f[] actual=actualMatrices;
+        for(int i:definition.workOrder) {
             int parent=definition.bones.get(i).parentIdx;
             Matrix4f before=parent<0?root:actual[parent];
             var joint=active==null || active[i]?definition.jointByBone[i]:null;
@@ -356,13 +362,13 @@ public final class PhysSimulation {
                     if(euler.isFinite()) {output[i*12]=euler.x;output[i*12+1]=euler.y;output[i*12+2]=euler.z;}
                 }
             }
-            actual[i]=RenderUtils.prepMatrixForBone(definition.bones.get(i),new Matrix4f(before),output,i*12);
+            actual[i]=RenderUtils.prepMatrixForBone(definition.bones.get(i),actual[i].set(before),output,i*12);
         }
     }
 
     private void pose(float[] output, Matrix4f root) {
-        Matrix4f[] actual=new Matrix4f[positions.length];
-        for(int i:definition.order) {
+        Matrix4f[] actual=actualMatrices;
+        for(int i:definition.workOrder) {
             int parent=definition.bones.get(i).parentIdx;
             Matrix4f before=parent<0?root:actual[parent];
             PhysDefinition.Joint joint=active==null || active[i]?definition.jointByBone[i]:null;
@@ -444,7 +450,7 @@ public final class PhysSimulation {
                 Vector3f euler=PhysMath.eulerZYX(correction);
                 if(euler.isFinite()) {output[i*12]=euler.x;output[i*12+1]=euler.y;output[i*12+2]=euler.z;}
             }
-            actual[i]=RenderUtils.prepMatrixForBone(definition.bones.get(i),new Matrix4f(before),output,i*12);
+            actual[i]=RenderUtils.prepMatrixForBone(definition.bones.get(i),actual[i].set(before),output,i*12);
             if(joint!=null) {
                 actual[i].transformPosition(definition.pivot(i),positions[i]);
                 if(joint.parent()<0) velocities[i].set(frameVelocity);

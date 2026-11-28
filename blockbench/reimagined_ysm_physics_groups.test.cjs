@@ -10,6 +10,10 @@ assert.ok(cosmicSource.includes('event.register("crosses", {"textures":["cross.p
 assert.equal(api.scriptAnalysis(cosmicSource,[]).diagnostics.length,0);
 for(const [name,textures] of [['','a.png'],['../sky','a.png'],['sky:bad','a.png'],['sky',''],['sky','../a.png'],['sky','/a.png'],['sky','a.jpg'],['sky','C:\\a.png'],['sky',Array(65).fill('a.png').join('\n')]])assert.throws(()=>api.cosmicRegistrationSource(name,textures));
 
+assert.equal(api.scriptAnalysis("Rysm.model('pose',g=>{}, {interpolate:true});").diagnostics.length,0);
+assert.ok(api.scriptAnalysis("Rysm.model('pose',g=>{}, {interpolate:1});").diagnostics.some(d=>d.severity==='error'));
+assert.ok(api.scriptAnalysis("Rysm.model('molang',e=>{e.register('x',g=>1);});\nRysm.model('pose',g=>g.molang('rysmjs.x')); ").diagnostics.some(d=>d.line===1&&d.message.includes('fallback')));
+assert.equal(api.scriptAnalysis("Rysm.model('molang',e=>{e.register('x',g=>1,{sync:true});});Rysm.model('pose',g=>g.molang('rysmjs.x')); ").diagnostics.length,0);
 class Group {
     static all=[];
     constructor(data={}) {Object.assign(this,{uuid:String(Group.all.length),name:'bone',origin:[0,0,0],parent:'root',children:[],export:true,locked:false,rysm_properties:{}},data);}

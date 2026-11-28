@@ -93,3 +93,6 @@ tasks.withType(ProcessResources).configureEach {
     exclude 'assets/yes_steve_model/builtin/**'
 }
 tasks.named('shadowJar') { exclude 'assets/yes_steve_model/builtin/**' }
+
+// Acceptance runs are opt-in and use a separate test-only mod.
+if (providers.gradleProperty("acceptance").isPresent()) apply from: rootProject.file("gradle/acceptance.gradle")

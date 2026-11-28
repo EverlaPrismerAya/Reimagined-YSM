@@ -45,13 +45,7 @@ public final class GpuRenderPath {
         if (!BoneSkinShader.ensureCompiled()) return false;
         if (model.bakedBones == null || model.bakedBones.isEmpty()) return false;
 
-        if (model.gpuMeshHandle == 0) {
-            GpuMesh mesh = GpuMeshBuilder.build(model);
-            if (mesh == null) return false;
-            model.gpuMeshHandle = encodeMeshRef(mesh);
-        }
-        GpuMesh mesh = decodeMeshRef(model.gpuMeshHandle);
-        if (mesh == null) return false;
+        GpuMesh mesh=getOrBuildMesh(model);if(mesh==null)return false;
 
         Matrix4f rootPose = pose.pose();
         Matrix3f rootNormal = pose.normal();
@@ -63,20 +57,8 @@ public final class GpuRenderPath {
         projMat.mul(mvMat, projMVScratch);
         projMVScratch.get(projScratch);
 
-        GpuPose instance = mesh.pose(boneParams);
-        ByteBuffer boneBuf = instance.boneBuffer;
-        boneBuf.clear();
-
-        updatePivotAbsStateBuffer(model, boneParams, stateBuffer);
-
-        int physicsBuffer=net.everla.ysmPhysLib.GpuPhysics.render(boneParams,rootPose,packedLight);
-        if(physicsBuffer==0) {
-            boneParams=net.everla.ysmPhysLib.PlayerPhysics.hideEndpoints(model,boneParams);
-            GeoModel.nComputeBoneMatrices(mesh.pointer, rootPoseScratch, rootNormalScratch, boneParams, packedLight, boneBuf);
-            updateBoneVisibility(model.bakedBones, boneParams, boneBuf);
-        }
-        boneBuf.position(0);
-        boneBuf.limit(mesh.boneCount * 144);
+        updatePivotAbsStateBuffer(model,boneParams,stateBuffer);
+        int drawBones=prepareBones(model,boneParams,rootPose,rootNormal,packedLight,false);
 
         RenderSystem.disableCull();
         RenderSystem.enableDepthTest();
@@ -97,9 +79,6 @@ public final class GpuRenderPath {
         GlStateManager._activeTexture(GL13.GL_TEXTURE0);
         GlStateManager._bindTexture(modelTexId);
 
-        int drawBones=physicsBuffer==0?instance.boneSsbo:physicsBuffer;
-        GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER, drawBones);
-        if(physicsBuffer==0) instance.uploadBones();
         GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, BoneSkinShader.ssbo, drawBones);
 
         float fogStart = RenderSystem.getShaderFogStart();
@@ -132,13 +111,13 @@ public final class GpuRenderPath {
         int drawCount = mesh.indexDrawCount(renderPartMask);
         if (drawCount > 0) {
             if (BoneSkinShader.locAlphaMode() >= 0) GL20.glUniform1i(BoneSkinShader.locAlphaMode(), 1);
-            GL11.glDrawElements(GL11.GL_TRIANGLES, drawCount, GL11.GL_UNSIGNED_INT, offsetBytes);
+            RenderMetrics.add("ordinaryDraws",1);GL11.glDrawElements(GL11.GL_TRIANGLES, drawCount, GL11.GL_UNSIGNED_INT, offsetBytes);
 
             if (model.isTranslucentTexture(textureIndex)) {
                 RenderSystem.enableBlend();
                 RenderSystem.defaultBlendFunc();
                 if (BoneSkinShader.locAlphaMode() >= 0) GL20.glUniform1i(BoneSkinShader.locAlphaMode(), 2);
-                GL11.glDrawElements(GL11.GL_TRIANGLES, drawCount, GL11.GL_UNSIGNED_INT, offsetBytes);
+                RenderMetrics.add("ordinaryDraws",1);GL11.glDrawElements(GL11.GL_TRIANGLES, drawCount, GL11.GL_UNSIGNED_INT, offsetBytes);
                 RenderSystem.disableBlend();
             }
         }
@@ -150,6 +129,21 @@ public final class GpuRenderPath {
         GlStateManager._glBindVertexArray(0);
         mc.gameRenderer.lightTexture().turnOffLightLayer();
         return true;
+    }
+    /** All geometry views share one skeleton preparation for each coordinate space. */
+    public static int prepareBones(GeoModel model,float[] parameters,Matrix4f root,Matrix3f normal,int light,boolean local) {
+        boolean world=net.everla.ysmPhysLib.WorldPhysicsContext.allows(false)&&!com.elfmcys.yesstevemodel.client.renderer.ModelPreviewRenderer.isPreview()&&!com.elfmcys.yesstevemodel.client.renderer.ModelPreviewRenderer.isExtraPlayer();
+        int physics=world?net.everla.ysmPhysLib.GpuPhysics.render(parameters,root,light):0;if(physics!=0)return physics;
+        GeoModel source=model.renderSource==null?model:model.renderSource;
+        GpuMesh mesh=getOrBuildMesh(source);var pose=mesh.pose(parameters,local);
+        if(!pose.prepared(parameters,root,normal,light)) {
+            var cpu=net.everla.ysmPhysLib.PlayerPhysics.hideEndpoints(source,parameters);pose.boneBuffer.clear();
+            if(local)GeoModel.nComputeBoneMatricesLocal(mesh.pointer,cpu,light,pose.boneBuffer);
+            else GeoModel.nComputeBoneMatrices(mesh.pointer,root.get(new float[16]),normal.get(new float[9]),cpu,light,pose.boneBuffer);
+            updateBoneVisibility(source.bakedBones,cpu,pose.boneBuffer);pose.boneBuffer.position(0).limit(mesh.boneCount*144);pose.uploadBones();pose.preparedNow(parameters,root,normal,light);
+            RenderMetrics.add("bonePreparations",1);
+        }
+        return pose.boneSsbo;
     }
     public static void updateBoneVisibility(List<GeoModel.BakedBone> bones, float[] params, ByteBuffer buffer) {
         // Native matrices do not account for the hide-self flag. Recompute visibility
@@ -173,7 +167,7 @@ public final class GpuRenderPath {
     }
 
     public static void disposeMesh(GeoModel model) {
-        net.everla.ysmPhysLib.GpuPhysics.disposeModel(model);
+        if(model.renderSource==null)net.everla.ysmPhysLib.GpuPhysics.disposeModel(model);
         if (model.gpuMeshHandle == 0) return;
         GpuMesh mesh = meshMap.remove(model.gpuMeshHandle);
         if (mesh != null) mesh.dispose();
@@ -193,6 +187,7 @@ public final class GpuRenderPath {
     }
 
     public static GpuMesh getOrBuildMesh(GeoModel model) {
+        if(model.gpuMeshHandle!=0&&decodeMeshRef(model.gpuMeshHandle)==null)model.gpuMeshHandle=0;
         if (model.gpuMeshHandle == 0) {
             GpuMesh mesh = GpuMeshBuilder.build(model);
             if (mesh == null) return null;

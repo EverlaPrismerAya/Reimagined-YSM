@@ -8,16 +8,16 @@ uniform samplerBuffer atlasLayout;
 uniform int atlasSize,overlay;
 uniform mat4 outlineTransform;
 uniform mat4 Projection;
-uniform int outlineFirst,outlineCount;
+uniform int outlineFirst,outlineCount,sourceFirst;
 vec4 projected(uint index) {
     uint base=index*8u;
     vec3 p=vec3(uintBitsToFloat(source[base]),uintBitsToFloat(source[base+1u]),uintBitsToFloat(source[base+2u]));
     return Projection*bones[source[base+6u]&65535u].transform*vec4(p,1);
 }
 void main() {
-    uint id=gl_GlobalInvocationID.x;
+    uint id=gl_GlobalInvocationID.x+uint(sourceFirst);
     uint count=source.length()/8u;
-    if(id>=count) return;
+    if(id>=count || (outlineCount>0 && id>=uint(outlineFirst+outlineCount))) return;
     uint base=id*8u;
     BoneData b=bones[source[base+6u]&65535u];
     vec3 local=vec3(uintBitsToFloat(source[base]),uintBitsToFloat(source[base+1u]),uintBitsToFloat(source[base+2u]));

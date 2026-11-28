@@ -13,6 +13,7 @@ public final class PlayerPhysics {
     private PlayerPhysics() {}
 
     public static void beforeAnimation(AnimatedGeoModel model) {
+        if(model!=null)IslandPhysics.restore(model);
         if(model!=null && model.ysmPhysics!=null) model.ysmPhysics.restore(model.getMatrixData());
     }
 
@@ -36,6 +37,7 @@ public final class PlayerPhysics {
         }
         var definition=model.getGeoModel().ysmPhysics;
         if(definition==null || definition.joints.isEmpty()) return;
+        if(!model.getGeoModel().physicsIsland) {IslandPhysics.update(model,animatable,partialTick,renderPose);return;}
         if(model.ysmPhysics==null) model.ysmPhysics=new PhysSimulation(definition);
         model.ysmPhysics.setFrameRate(fps);
         boolean[] enabled=enabled(definition,animatable::isAnimationPlaying,animatable.getEvaluationContext()::physicsVariable);

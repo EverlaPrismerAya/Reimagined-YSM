@@ -1,0 +1,43 @@
+// Opt-in test mod; excluded from all production jars and source jars.
+sourceSets {
+    acceptance {
+        java.srcDirs = [rootProject.file('common/src/acceptance/java'), file('src/acceptance/java')]
+        resources.srcDirs = [rootProject.file('common/src/acceptance/resources'), file('src/acceptance/resources')]
+        compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.main.output + sourceSets.main.runtimeClasspath
+    }
+}
+configurations {
+    acceptanceImplementation.extendsFrom implementation
+    acceptanceRuntimeOnly.extendsFrom runtimeOnly
+}
+loom {
+    mods {
+        rysm { sourceSet sourceSets.main }
+        rysm_acceptance { sourceSet sourceSets.acceptance }
+    }
+    runs {
+        acceptanceClient {
+            client()
+            source sourceSets.acceptance
+            runDir rootProject.file("build/acceptance/runtime/${project.name}/${providers.gradleProperty('acceptanceId').getOrElse('client')}").absolutePath
+            vmArg '-Drysm.acceptance=true'
+            vmArg "-Drysm.acceptance.channel=${providers.gradleProperty('acceptanceChannel').getOrElse(rootProject.file('build/acceptance/channel').absolutePath)}"
+            vmArg "-Drysm.renderMetrics=${providers.gradleProperty('acceptanceMetrics').getOrElse('true')}"
+            programArgs '--username', providers.gradleProperty('acceptanceUser').getOrElse('AcceptanceOne'), '--width', '1920', '--height', '1080'
+        }
+        acceptanceServer {
+            server()
+            source sourceSets.acceptance
+            runDir rootProject.file("build/acceptance/runtime/${project.name}/${providers.gradleProperty('acceptanceId').getOrElse('server')}").absolutePath
+            vmArg '-Drysm.acceptance=true'
+            vmArg "-Drysm.acceptance.channel=${providers.gradleProperty('acceptanceChannel').getOrElse(rootProject.file('build/acceptance/channel').absolutePath)}"
+            vmArg '-Dforge.enableGameTest=true'
+            vmArg '-Dforge.enabledGameTestNamespaces=rysm_acceptance'
+            programArg 'nogui'
+        }
+    }
+}
+tasks.named('compileAcceptanceJava') { options.compilerArgs += ['-proc:none'] }
+
+if (project.name == "forge") loom.forge.mixinConfig "rysm_acceptance.mixins.json"

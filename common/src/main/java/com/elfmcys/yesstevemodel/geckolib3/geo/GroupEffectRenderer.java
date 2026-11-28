@@ -33,6 +33,84 @@ public final class GroupEffectRenderer {
     private static int material, materialCosmic, atlas, atlasFbo, atlasSize, entityVao, entityVbo;
     private static final Matrix4f entityIdentity=new Matrix4f();
     private static int currentProgram;
+    private record AtlasTarget(int texture,int framebuffer,int size) {}
+    private static final LinkedHashMap<Integer,AtlasTarget> atlasTargets=new LinkedHashMap<>(8,.75f,true);
+    private static final long ATLAS_IDLE_BUDGET=128L*1024*1024;
+    private static int phase;
+    public static boolean renderPass(PoseStack.Pose pose,GeoModel model,float[] params,float[] state,int textureIndex,int part,int light,int overlay,float r,float g,float b,float alpha,ResourceLocation texture,boolean preview,int pass) {
+        int previous=phase;phase=pass;
+        try{return render(pose,model,params,state,textureIndex,part,light,overlay,r,g,b,alpha,texture,preview);}finally{phase=previous;}
+    }
+
+    private static int coordinatedDepth;
+    private static final Set<GeoModel> cpuRanges=Collections.newSetFromMap(new WeakHashMap<>());
+    /** External entry points protect state; nested phases share the coordinator's snapshot. */
+    public static final class Scope implements AutoCloseable {
+        private final DrawState draw;
+        private final ShaderUtil.SavedComputeState compute;
+        private Scope(){boolean outer=coordinatedDepth++==0;draw=outer?new DrawState():null;compute=outer&&GpuCapability.isAvailable()?new ShaderUtil.SavedComputeState(6):null;}
+        public void close(){try{if(compute!=null)compute.close();}finally{try{if(draw!=null)draw.close();}finally{coordinatedDepth--;}}}
+    }
+    public static Scope coordinate(){return new Scope();}
+    public static boolean hasVisibleGeometry(GeoModel model,float[] params,int part) {
+        for(int i=0;i<model.bakedBones.size();i++) {
+            var bone=model.bakedBones.get(i);
+            if(bone.cubes.isEmpty() || params[i*12+9]!=0 || part!=0&&bone.partMask!=part&&bone.partMask!=3)continue;
+            boolean visible=true;
+            for(int ancestor=i;ancestor>=0;ancestor=model.bakedBones.get(ancestor).parentIdx) {
+                int offset=ancestor*12;
+                if(params[offset+6]==0 || params[offset+7]==0 || params[offset+8]==0 || ancestor!=i&&params[offset+10]!=0){visible=false;break;}
+            }
+            if(visible)return true;
+        }
+        return false;
+    }
+    private static void gpuPrograms() {
+        if(skinSurface==0)skinSurface=skinProgram("/group_surface.fsh");
+        if(skinCosmic==0)skinCosmic=skinProgram("/group_cosmic.fsh");
+        if(skinMaterial==0)skinMaterial=skinProgram("/group_material.fsh");
+        if(entityCompute==0)try{entityCompute=ShaderUtil.linkProgram(ShaderUtil.compileShaderFromResource(GL43.GL_COMPUTE_SHADER,"/group_entity.csh"));}
+        catch(Exception e){throw new IllegalStateException("Cannot compile GPU group entity transform",e);}
+    }
+    /** Prepare allocation/compilation before any base surface is submitted. Failures belong to this slice. */
+    public static boolean prepare(GeoModel model,float[] params,ResourceLocation texture) {
+        if(model.bakedBones!=null&&!hasVisibleGeometry(model,params,0))return true;
+        if(model.bakedBones==null||!compile())return false;
+        if(!GpuCapability.isAvailable()||!net.everla.reimaginedysm.core.NativeLibLoader.isLoaded()||cpuRanges.contains(model))return true;
+        // Preflight runs inside the draw coordinator too; restore its temporary
+        // framebuffer/texture bindings before the ordinary world surface draws.
+        try(var saved=coordinate();var draw=new DrawState()) {
+            gpuPrograms();
+            // Dynamic same-group volumes require camera-aware CPU transforms, only for this range.
+            if(requiresDynamicClipping(model)){cpuRanges.add(model);return true;}
+            if(model.overlayOnly){if(dynamicMask==0)dynamicMask=program("/group_mask.fsh");ensureSilhouetteResources();if(model.renderSource!=null){var full=GpuRenderPath.getOrBuildMesh(model.renderSource);if(full.groups==null)full.groups=new GroupGpuMesh(model.renderSource);}}
+            for(var bone:model.bakedBones)if(!bone.cubes.isEmpty()&&bone.style.cosmic()){bind(skinCosmic);cosmicUniforms(skinCosmic,bone.style,false,0,model,bone.cosmicEffect);}
+            GpuMesh mesh=GpuRenderPath.getOrBuildMesh(model);if(mesh==null)return true;
+            if(mesh.groups==null)mesh.groups=new GroupGpuMesh(model);
+            var instance=mesh.pose(params);
+            if(mesh.groups.hasTranslucentFaces) {
+                if(solidsCompute==0)solidsCompute=ShaderUtil.linkProgram(ShaderUtil.compileShaderFromResource(GL43.GL_COMPUTE_SHADER,"/group_solids.csh"));
+                instance.ensureSurfaceBuffers(mesh.groups);
+            }
+            if(mesh.groups.vertices>0 && net.everla.reimaginedysm.compat.oculus.OculusCompat.isShaderPackInUse()) {
+                int[] size=sourceSize(texture);ensureMaterialResources(mesh.groups.atlasLayout(size[0],size[1]).size);instance.ensureGroupBuffers(mesh.groups);
+            }
+            return true;
+        }catch(Exception|LinkageError|OutOfMemoryError failure){while(GL11.glGetError()!=GL11.GL_NO_ERROR){}cpuRanges.add(model);YesSteveModel.LOGGER.warn("GPU effect range preparation failed; using its CPU surface path",failure);return true;}
+    }
+
+    public static boolean requiresDynamicClipping(GeoModel model) {
+        GeoModel source=model.renderSource==null?model:model.renderSource;
+        Set<Integer> groups=new HashSet<>();
+        for(var bone:model.bakedBones)for(var cube:bone.cubes)for(var face:cube.quads)
+            if(face.translucentTextures==null?face.isTranslucent:!face.translucentTextures.isEmpty())groups.add(bone.surfaceGroup);
+        for(var bone:source.bakedBones)if(bone.dynamicGeometry()&&!bone.cubes.isEmpty()&&groups.contains(bone.surfaceGroup))return true;
+        return false;
+    }
+
+    private static void drawArrays(int mode,int first,int count){net.everla.reimaginedysm.gpu.RenderMetrics.add("effectDraws",1);GL11.glDrawArrays(mode,first,count);}
+    private static void drawArraysInstanced(int mode,int first,int count,int instances){net.everla.reimaginedysm.gpu.RenderMetrics.add("effectDraws",1);net.everla.reimaginedysm.gpu.RenderMetrics.add("outlineInstances",instances);GL31.glDrawArraysInstanced(mode,first,count,instances);}
+    private static void dispatchCompute(int x,int y,int z){net.everla.reimaginedysm.gpu.RenderMetrics.add("effectDispatches",1);GL43.glDispatchCompute(x,y,z);}
     private static int silhouetteTexture,silhouetteFbo,silhouetteWidth,silhouetteHeight;
     private static final int[] silhouetteViewport=new int[4];
     private static int skinSurface,skinCosmic,skinMaterial,entityCompute,solidsCompute;
@@ -44,6 +122,18 @@ public final class GroupEffectRenderer {
     private record Face(GeoModel.BakedQuad quad,List<float[]> polygon) {}
     private record Solid(int bone, GeoModel.BakedCube source,List<Face> faces,
                          List<SurfaceUnion.Plane> planes,float[] bounds) {}
+    private record SolidShape(float[] bounds,Vector3f center,List<SurfaceUnion.Plane> planes) {}
+    private static final Map<GeoModel.BakedCube,SolidShape> solidShapes=new WeakHashMap<>();
+    private static SolidShape shape(GeoModel.BakedCube cube) {
+        return solidShapes.computeIfAbsent(cube,c->{
+            float[] bounds={Float.POSITIVE_INFINITY,Float.POSITIVE_INFINITY,Float.POSITIVE_INFINITY,Float.NEGATIVE_INFINITY,Float.NEGATIVE_INFINITY,Float.NEGATIVE_INFINITY};
+            Vector3f center=new Vector3f();int count=0;
+            for(var q:c.quads)for(int v=0;v<4;v++){center.add(q.positions[v*3],q.positions[v*3+1],q.positions[v*3+2]);count++;for(int axis=0;axis<3;axis++){bounds[axis]=Math.min(bounds[axis],q.positions[v*3+axis]);bounds[axis+3]=Math.max(bounds[axis+3],q.positions[v*3+axis]);}}
+            var planes=new ArrayList<SurfaceUnion.Plane>();if(count>0)center.div(count);
+            if(c.closedVolume&&c.quads.size()==6)for(var q:c.quads){var n=new Vector3f(q.normal);float offset=n.dot(new Vector3f(q.positions[0],q.positions[1],q.positions[2]).sub(center));if(Math.abs(offset)<1e-6f){planes.clear();break;}if(offset<0)n.negate();planes.add(new SurfaceUnion.Plane(n.x,n.y,n.z,n.x*q.positions[0]+n.y*q.positions[1]+n.z*q.positions[2]));}
+            return new SolidShape(bounds,new Vector3f(center),List.copyOf(planes));
+        });
+    }
     private record Batch(int bone,List<float[]> triangles,int first) {
         Batch(int bone,List<float[]> triangles) { this(bone,triangles,0); }
     }
@@ -77,19 +167,29 @@ public final class GroupEffectRenderer {
     private static boolean render(PoseStack.Pose pose,GeoModel model,float[] params,float[] state,
                                   int textureIndex,int part,int light,int overlay,float r,float g,float b,float alpha,
                                   ResourceLocation texture,boolean preview,boolean dynamicOnly) {
+        if(model.bakedBones!=null&&!hasVisibleGeometry(model,params,part))return true;
         if(model.bakedBones==null || !compile()) return false;
-        if(!dynamicOnly && GpuCapability.isAvailable() && net.everla.reimaginedysm.core.NativeLibLoader.isLoaded()) {
-            try(var saved=new DrawState();var compute=new ShaderUtil.SavedComputeState(6)) {
-                if(renderGpu(pose,model,params,textureIndex,part,light,overlay,r,g,b,alpha,texture,preview)) {
+        if(!dynamicOnly && !cpuRanges.contains(model) && GpuCapability.isAvailable() && net.everla.reimaginedysm.core.NativeLibLoader.isLoaded()) {
+            try(var saved=coordinate()) {
+                if(renderGpu(pose,model,params,state,textureIndex,part,light,overlay,r,g,b,alpha,texture,preview)) {
                     if(model.hasFacingCameraBones || model.hasFrameAnimations) render(pose,model,params,state,textureIndex,part,light,overlay,r,g,b,alpha,texture,preview,true);
                     return true;
                 }
             }
         }
         var mc=Minecraft.getInstance();
+        // Blocker volumes are read-only dependencies: only selected faces emit triangles.
+        GeoModel blockers=model.renderSource==null?model:model.renderSource;
+        Set<GeoModel.BakedQuad> selected=Collections.newSetFromMap(new IdentityHashMap<>());
+        Set<Integer> groups=new HashSet<>();
+        for(var bone:model.bakedBones)if(!dynamicOnly || bone.dynamicGeometry())for(var cube:bone.cubes)for(var face:cube.quads){selected.add(face);groups.add(bone.surfaceGroup);}
         var transforms=new Matrix4f[model.bakedBones.size()];
         var visible=new boolean[transforms.length];
-        boolean gpuPose=!dynamicOnly && !preview && net.everla.ysmPhysLib.GpuPhysics.readRenderMatrices(params,pose.pose(),light,transforms,visible);
+        boolean[] needed=new boolean[transforms.length];
+        for(int i=0;i<needed.length;i++)needed[i]=groups.contains(blockers.bakedBones.get(i).surfaceGroup) && !blockers.bakedBones.get(i).cubes.isEmpty() && (part==0||blockers.bakedBones.get(i).partMask==part||blockers.bakedBones.get(i).partMask==3);
+        var gpuTransforms=new Matrix4f[transforms.length];var gpuVisible=new boolean[transforms.length];var gpuNeeded=needed.clone();
+        for(int i=0;i<gpuNeeded.length;i++)gpuNeeded[i]&=!blockers.bakedBones.get(i).facingCameraSubtree;
+        boolean gpuPose=!preview && net.everla.ysmPhysLib.GpuPhysics.readRenderMatrices(params,pose.pose(),light,gpuTransforms,gpuVisible,gpuNeeded);
         if(!gpuPose) params=net.everla.ysmPhysLib.PlayerPhysics.hideEndpoints(model,params);
         Matrix4f camera=FacingCameraTransform.previewToCamera(pose.pose(),RenderSystem.getProjectionMatrix().m11());
         if(model.hasFacingCameraBones && net.everla.ysmPhysLib.WorldPhysicsContext.allows(preview)) {
@@ -98,50 +198,41 @@ public final class GroupEffectRenderer {
         }
         var solids=new ArrayList<Solid>();
         for(int i=0;i<transforms.length;i++) {
-            var bone=model.bakedBones.get(i);
-            if(dynamicOnly && !bone.dynamicGeometry()) continue;
-            Matrix4f local=gpuPose?transforms[i]:NativeModelRenderer.calculateBoneMatrix(i,model.bakedBones,params,transforms,visible,new Matrix4f(),state,camera);
-            if(!visible[i] || params[i*12+9]!=0 || (part!=0 && bone.partMask!=part && bone.partMask!=3)) continue;
-            Matrix4f matrix=gpuPose?new Matrix4f(local):new Matrix4f(pose.pose()).mul(local);
+            var bone=blockers.bakedBones.get(i);
+            if(!needed[i]) continue;
+            boolean gpuBone=gpuPose&&gpuNeeded[i];
+            Matrix4f local=gpuBone?gpuTransforms[i]:NativeModelRenderer.calculateBoneMatrix(i,blockers.bakedBones,params,transforms,visible,new Matrix4f(),state,camera);
+            if(!(gpuBone?gpuVisible[i]:visible[i]) || params[i*12+9]!=0 || (part!=0 && bone.partMask!=part && bone.partMask!=3)) continue;
+            Matrix4f matrix=gpuBone?new Matrix4f(local):new Matrix4f(pose.pose()).mul(local);
             Matrix3f normal=matrix.normal(new Matrix3f());
             float frameV=NativeModelRenderer.frameOffset(bone);
             for(var cube:bone.cubes) {
+                var shape=shape(cube);boolean emits=cube.quads.stream().anyMatch(selected::contains);
+                if(!emits&&shape.planes().isEmpty())continue;
                 var faces=new ArrayList<Face>();
-                float[] bounds={Float.POSITIVE_INFINITY,Float.POSITIVE_INFINITY,Float.POSITIVE_INFINITY,
-                        Float.NEGATIVE_INFINITY,Float.NEGATIVE_INFINITY,Float.NEGATIVE_INFINITY};
-                Vector3f center=new Vector3f();int count=0;
-                for(var q:cube.quads) {
-                    var poly=new ArrayList<float[]>();
-                    Vector3f n=new Vector3f(q.normal).mul(normal).normalize();
-                    for(int v=0;v<4;v++) {
-                        Vector4f p=new Vector4f(q.positions[v*3],q.positions[v*3+1],q.positions[v*3+2],1).mul(matrix);
-                        poly.add(new float[]{p.x,p.y,p.z,q.uvs[v*2],q.uvs[v*2+1]+frameV,n.x,n.y,n.z});
-                        center.add(p.x,p.y,p.z);count++;
-                        for(int axis=0;axis<3;axis++) {bounds[axis]=Math.min(bounds[axis],poly.get(v)[axis]);bounds[axis+3]=Math.max(bounds[axis+3],poly.get(v)[axis]);}
-                    }
+                if(emits)for(var q:cube.quads)if(selected.contains(q)) {
+                    var poly=new ArrayList<float[]>();Vector3f n=new Vector3f(q.normal).mul(normal).normalize();
+                    for(int v=0;v<4;v++){Vector4f p=new Vector4f(q.positions[v*3],q.positions[v*3+1],q.positions[v*3+2],1).mul(matrix);poly.add(new float[]{p.x,p.y,p.z,q.uvs[v*2],q.uvs[v*2+1]+frameV,n.x,n.y,n.z});}
                     faces.add(new Face(q,poly));
                 }
-                if(count==0) continue;
-                center.div(count);
+                // Read-only blockers transform six planes and a bound, never generate material/triangle vertices.
+                float[] bounds={Float.POSITIVE_INFINITY,Float.POSITIVE_INFINITY,Float.POSITIVE_INFINITY,Float.NEGATIVE_INFINITY,Float.NEGATIVE_INFINITY,Float.NEGATIVE_INFINITY};
+                for(int corner=0;corner<8;corner++){var p=matrix.transformPosition(new Vector3f(shape.bounds()[(corner&1)==0?0:3],shape.bounds()[(corner&2)==0?1:4],shape.bounds()[(corner&4)==0?2:5]));for(int axis=0;axis<3;axis++){bounds[axis]=Math.min(bounds[axis],p.get(axis));bounds[axis+3]=Math.max(bounds[axis+3],p.get(axis));}}
                 var planes=new ArrayList<SurfaceUnion.Plane>();
-                // Open/flat/cutout geometry does not define a filled volume.
-                if(cube.closedVolume && faces.size()==6) for(var face:faces) {
-                    float[] v=face.polygon.get(0);Vector3f n=new Vector3f(v[5],v[6],v[7]);
-                    if(n.dot(new Vector3f(v[0],v[1],v[2]).sub(center))<0) n.negate();
-                    if(Math.abs(n.dot(new Vector3f(v[0],v[1],v[2]).sub(center)))<1e-6f) {planes.clear();break;}
-                    planes.add(new SurfaceUnion.Plane(n.x,n.y,n.z,n.x*v[0]+n.y*v[1]+n.z*v[2]));
-                }
+                var worldCenter=matrix.transformPosition(new Vector3f(shape.center()));
+                for(var plane:shape.planes()){var n=new Vector3f(plane.x(),plane.y(),plane.z()).mul(normal);float length=n.length();if(length<1e-15f){planes.clear();break;}float d=(plane.d()+n.x*matrix.m30()+n.y*matrix.m31()+n.z*matrix.m32())/length;n.div(length);if(Math.abs(d-n.dot(worldCenter))<1e-6f){planes.clear();break;}planes.add(new SurfaceUnion.Plane(n.x,n.y,n.z,d));}
                 solids.add(new Solid(i,cube,faces,planes,bounds));
             }
         }
         var batches=new ArrayList<Batch>();
-        // ponytail: pairwise broad phase is quadratic; use a spatial index if dense models make clipping costly.
+        // Exact CPU fallback retains all same-group blocker volumes.
         for(int s=0;s<solids.size();s++) {
             var solid=solids.get(s);var vertices=new ArrayList<float[]>();
             for(var face:solid.faces) {
+                if(!selected.contains(face.quad))continue;
                 if(solid.source.cullable && !frontFacing(face.polygon)) continue;
                 List<List<float[]>> pieces=new ArrayList<>();pieces.add(face.polygon);
-                if(face.quad.isTranslucent) for(int t=0;t<solids.size() && !pieces.isEmpty();t++) {
+                if(face.quad.translucent(textureIndex)) for(int t=0;t<solids.size() && !pieces.isEmpty();t++) {
                     var other=solids.get(t);
                     if(s==t || other.planes.isEmpty() || model.bakedBones.get(other.bone).surfaceGroup!=model.bakedBones.get(solid.bone).surfaceGroup
                             || !overlap(solid.bounds,other.bounds)) continue;
@@ -177,26 +268,14 @@ public final class GroupEffectRenderer {
         return true;
     }
 
-    private static boolean renderGpu(PoseStack.Pose pose,GeoModel model,float[] params,int textureIndex,int part,
+    private static boolean renderGpu(PoseStack.Pose pose,GeoModel model,float[] params,float[] state,int textureIndex,int part,
                                      int light,int overlay,float r,float g,float b,float alpha,ResourceLocation texture,boolean preview) {
         GpuMesh mesh=GpuRenderPath.getOrBuildMesh(model);
-        if(mesh==null || mesh.groups==null) return false;
-        if(skinSurface==0) {
-            skinSurface=skinProgram("/group_surface.fsh");
-            skinCosmic=skinProgram("/group_cosmic.fsh");
-            skinMaterial=skinProgram("/group_material.fsh");
-            try {entityCompute=ShaderUtil.linkProgram(ShaderUtil.compileShaderFromResource(GL43.GL_COMPUTE_SHADER,"/group_entity.csh"));}
-            catch(Exception ex) {throw new IllegalStateException("Cannot compile GPU group entity transform",ex);}
-        }
+        if(mesh==null)return false;
+        if(mesh.groups==null)mesh.groups=new GroupGpuMesh(model);
+        gpuPrograms();
         GpuPose instance=mesh.pose(params);
-        int bones=preview?0:net.everla.ysmPhysLib.GpuPhysics.render(params,pose.pose(),light);
-        if(bones==0) {
-            float[] cpu=net.everla.ysmPhysLib.PlayerPhysics.hideEndpoints(model,params);
-            instance.boneBuffer.clear();
-            GeoModel.nComputeBoneMatrices(mesh.pointer,pose.pose().get(new float[16]),pose.normal().get(new float[9]),cpu,light,instance.boneBuffer);
-            GpuRenderPath.updateBoneVisibility(model.bakedBones,cpu,instance.boneBuffer);
-            instance.boneBuffer.position(0).limit(mesh.boneCount*144);instance.uploadBones();bones=instance.boneSsbo;
-        }
+        int bones=GpuRenderPath.prepareBones(model,params,pose.pose(),pose.normal(),light,false);
         prepareGpuSurfaces(mesh.groups,instance,bones,part);
         GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,0,bones);
         GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,1,mesh.groups.vbo);
@@ -206,17 +285,24 @@ public final class GroupEffectRenderer {
             GlStateManager._activeTexture(GL13.GL_TEXTURE0+unit);GlStateManager._bindTexture(RenderSystem.getShaderTexture(unit));
         }
         GlStateManager._activeTexture(GL13.GL_TEXTURE0);GlStateManager._bindTexture(mc.getTextureManager().getTexture(texture).getId());
-        if(!net.everla.reimaginedysm.compat.oculus.OculusCompat.isRenderingShadowPass()) prepareGpuSilhouette(model,mesh.groups,part);
+        if(!net.everla.reimaginedysm.compat.oculus.OculusCompat.isRenderingShadowPass() && model.overlayOnly) {
+            GroupGpuMesh silhouette=mesh.groups;
+            if(model.renderSource!=null){var full=GpuRenderPath.getOrBuildMesh(model.renderSource);if(full.groups==null)full.groups=new GroupGpuMesh(model.renderSource);silhouette=full.groups;}
+            GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,1,silhouette.vbo);
+            prepareGpuSilhouette(model,silhouette,part,pose,params,state,preview,light);
+            GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,1,mesh.groups.vbo);
+        }
         RenderSystem.enableDepthTest();RenderSystem.depthFunc(GL11.GL_LEQUAL);RenderSystem.disableCull();
         if(net.everla.reimaginedysm.compat.oculus.OculusCompat.isShaderPackInUse())
             drawGpuMaterials(model,mesh.groups,instance,bones,textureIndex,part,light,overlay,r,g,b,alpha,texture,preview);
         else {
             GL30.glBindVertexArray(mesh.groups.vao);
             for(int pass=1;pass<=2;pass++) {
-                if(pass==2 && !model.isTranslucentTexture(textureIndex)) continue;
+                if(phase==1 && pass==2 || phase==2 && pass==1 || pass==2 && !model.isTranslucentTexture(textureIndex)) continue;
                 RenderSystem.depthMask(pass==1);
                 if(pass==1) RenderSystem.disableBlend();else {RenderSystem.enableBlend();RenderSystem.defaultBlendFunc();}
                 for(var range:mesh.groups.ranges) {
+                    if(model.overlayOnly)continue;
                     var bone=model.bakedBones.get(range.bone());
                     if(part!=0 && bone.partMask!=part && bone.partMask!=3) continue;
                     int program=bone.style.cosmic()?skinCosmic:skinSurface;
@@ -224,9 +310,9 @@ public final class GroupEffectRenderer {
                     GL20.glUniform4f(location(program,"color"),r,g,b,alpha);
                     if(bone.style.cosmic()) cosmicUniforms(program,bone.style,preview,light,model,bone.cosmicEffect);
                     else {surfaceUniforms(program,light,overlay);uniform(program,"mode",0);uniform(program,"glowing",bone.glow?1:0);}
-                    GL11.glDrawArrays(GL11.GL_TRIANGLES,range.first(),range.count());
+                    drawArrays(GL11.GL_TRIANGLES,range.first(),range.count());
                 }
-                if(pass==1) drawGpuOutlines(model,mesh.groups,part,textureIndex,light,overlay,alpha);
+                if(pass==1 && phase!=2 && !net.everla.reimaginedysm.compat.oculus.OculusCompat.isRenderingShadowPass() && !net.everla.reimaginedysm.compat.oculus.ShaderOutlineCompat.isEnabled()) drawGpuOutlines(model,mesh.groups,part,textureIndex,light,overlay,alpha);
             }
         }
         return true;
@@ -257,7 +343,7 @@ public final class GroupEffectRenderer {
     private static void gpuSurfaceUniforms(int program,GroupGpuMesh mesh) {
         uniform(program,"atlasLayout",5);
         uniform(program,"surfaceClipping",mesh.hasTranslucentFaces?1:0);uniform(program,"solidCount",mesh.solidCount);
-        uniform(program,"silhouetteMaskEnabled",0);
+        uniform(program,"silhouetteMaskEnabled",0);uniform(program,"outlineSteps",0);
     }
     private static void prepareGpuSurfaces(GroupGpuMesh mesh,GpuPose instance,int bones,int part) {
         if(mesh.solidCount==0 || !mesh.hasTranslucentFaces)return;
@@ -267,15 +353,20 @@ public final class GroupEffectRenderer {
         GlStateManager._glUseProgram(solidsCompute);uniform(solidsCompute,"solidCount",mesh.solidCount);uniform(solidsCompute,"part",part);
         GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,0,bones);GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,3,mesh.solids);
         GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,4,instance.surfaceSolids);GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,5,instance.surfaceNeighbors);
-        for(int stage=0;stage<2;stage++) {
-            uniform(solidsCompute,"stage",stage);GL43.glDispatchCompute((mesh.solidCount+63)/64,1,1);
+        long version=GpuPose.version(bones);
+        if(instance.surfaceBoneBuffer==bones&&instance.surfaceVersion==version&&instance.surfacePart==part)return;
+        uniform(solidsCompute,"stage",0);dispatchCompute((mesh.solidCount+63)/64,1,1);GL43.glMemoryBarrier(GL43.GL_SHADER_STORAGE_BARRIER_BIT);
+        uniform(solidsCompute,"nodeCount",mesh.bvh.size());uniform(solidsCompute,"stage",1);
+        for(int depth=mesh.bvh.depth;depth>=0;depth--) {
+            uniform(solidsCompute,"refitDepth",depth);dispatchCompute((mesh.bvh.size()+63)/64,1,1);
             GL43.glMemoryBarrier(GL43.GL_SHADER_STORAGE_BARRIER_BIT);
         }
+
+        instance.surfaceBoneBuffer=bones;instance.surfaceVersion=version;instance.surfacePart=part;
+
     }
 
-    private static void prepareGpuSilhouette(GeoModel model,GroupGpuMesh mesh,int part) {
-        if(model.bakedBones.stream().noneMatch(b->b.style.outline() && b.style.outlineWidth()>0))return;
-        int framebuffer=GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+    private static void ensureSilhouetteResources() {
         GL11.glGetIntegerv(GL11.GL_VIEWPORT,silhouetteViewport);
         if(silhouetteTexture==0){silhouetteTexture=GL11.glGenTextures();silhouetteFbo=GL30.glGenFramebuffers();}
         GlStateManager._activeTexture(GL13.GL_TEXTURE0+4);GlStateManager._bindTexture(silhouetteTexture);
@@ -289,16 +380,62 @@ public final class GroupEffectRenderer {
         GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER,silhouetteFbo);
         GL30.glFramebufferTexture2D(GL30.GL_DRAW_FRAMEBUFFER,GL30.GL_COLOR_ATTACHMENT0,GL11.GL_TEXTURE_2D,silhouetteTexture,0);
         if(GL30.glCheckFramebufferStatus(GL30.GL_DRAW_FRAMEBUFFER)!=GL30.GL_FRAMEBUFFER_COMPLETE)throw new IllegalStateException("Incomplete GPU silhouette framebuffer");
+    }
+
+    private static void prepareGpuSilhouette(GeoModel model,GroupGpuMesh mesh,int part,PoseStack.Pose pose,float[] params,float[] state,boolean preview,int light) {
+        if(model.bakedBones.stream().noneMatch(b->b.style.outline() && b.style.outlineWidth()>0))return;
+        int framebuffer=GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+        ensureSilhouetteResources();
         GL11.glViewport(0,0,silhouetteWidth,silhouetteHeight);
         boolean scissor=GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);GL11.glDisable(GL11.GL_SCISSOR_TEST);
         RenderSystem.disableDepthTest();RenderSystem.disableBlend();RenderSystem.disableCull();RenderSystem.colorMask(true,true,true,true);
         GL30.glClearBufferfv(GL11.GL_COLOR,0,new float[]{0,0,0,0});
-        bind(skinSurface);gpuSurfaceUniforms(skinSurface,mesh);uniform(skinSurface,"materialPass",0);uniform(skinSurface,"mode",2);uniform(skinSurface,"alphaMode",0);
+        bind(skinSurface);gpuSurfaceUniforms(skinSurface,mesh);uniform(skinSurface,"materialPass",0);uniform(skinSurface,"mode",2);uniform(skinSurface,"alphaMode",0);uniform(skinSurface,"surfaceClipping",0);
         GL20.glUniform4f(location(skinSurface,"color"),1,1,1,1);GL30.glBindVertexArray(mesh.vao);
-        for(var range:mesh.ranges){var bone=model.bakedBones.get(range.bone());if(part==0 || bone.partMask==part || bone.partMask==3)GL11.glDrawArrays(GL11.GL_TRIANGLES,range.first(),range.count());}
+        for(var range:mesh.ranges){var bone=model.bakedBones.get(range.bone());if(part==0 || bone.partMask==part || bone.partMask==3)drawArrays(GL11.GL_TRIANGLES,range.first(),range.count());}
+        drawDynamicSilhouette(model,part,pose,params,state,preview,light);
         if(scissor)GL11.glEnable(GL11.GL_SCISSOR_TEST);
         GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER,framebuffer);GL11.glViewport(silhouetteViewport[0],silhouetteViewport[1],silhouetteWidth,silhouetteHeight);
     }
+    private static int dynamicMask;
+    /** Only dynamic subtrees supplement the resident silhouette; no material baking. */
+    private static void drawDynamicSilhouette(GeoModel view,int part,PoseStack.Pose pose,float[] params,float[] state,boolean preview,int light) {
+        GeoModel source=view.renderSource==null?view:view.renderSource;
+        if(source.bakedBones.stream().noneMatch(b->b.dynamicGeometry()&&!b.cubes.isEmpty()))return;
+        if(dynamicMask==0)try{dynamicMask=program("/group_mask.fsh");}catch(Exception e){throw new IllegalStateException("Cannot prepare dynamic silhouette",e);}
+        var transforms=new Matrix4f[source.bakedBones.size()];var visible=new boolean[transforms.length];
+        var gpuTransforms=new Matrix4f[transforms.length];var gpuVisible=new boolean[transforms.length];var needed=new boolean[transforms.length];
+        for(int i=0;i<needed.length;i++){var b=source.bakedBones.get(i);needed[i]=b.dynamicGeometry()&&!b.facingCameraSubtree&&!b.cubes.isEmpty()&&(part==0||b.partMask==part||b.partMask==3);}
+        boolean gpu=!preview&&net.everla.ysmPhysLib.GpuPhysics.readRenderMatrices(params,pose.pose(),light,gpuTransforms,gpuVisible,needed);
+        Matrix4f camera=FacingCameraTransform.previewToCamera(pose.pose(),RenderSystem.getProjectionMatrix().m11());
+        if(source.hasFacingCameraBones&&net.everla.ysmPhysLib.WorldPhysicsContext.allows(preview)) {
+            camera=net.everla.ysmPhysLib.WorldPhysicsContext.modelToWorld(pose.pose());
+            new Matrix4f().rotation(new org.joml.Quaternionf(Minecraft.getInstance().getEntityRenderDispatcher().cameraOrientation()).conjugate()).mul(camera,camera);
+        }
+        var batches=new ArrayList<Batch>();int first=0;
+        for(int i=0;i<transforms.length;i++) {
+            var bone=source.bakedBones.get(i);
+            if(!bone.dynamicGeometry()||bone.cubes.isEmpty()||part!=0&&bone.partMask!=part&&bone.partMask!=3||params[i*12+9]!=0)continue;
+            boolean gpuBone=gpu&&needed[i];
+            Matrix4f local=gpuBone?gpuTransforms[i]:NativeModelRenderer.calculateBoneMatrix(i,source.bakedBones,params,transforms,visible,new Matrix4f(),state,camera);
+            if(!(gpuBone?gpuVisible[i]:visible[i]))continue;
+            Matrix4f matrix=gpuBone?local:new Matrix4f(pose.pose()).mul(local);
+            float frame=NativeModelRenderer.frameOffset(bone);var vertices=new ArrayList<float[]>();
+            for(var cube:bone.cubes)for(var q:cube.quads)for(int v:new int[]{0,1,2,0,2,3}) {
+                var p=matrix.transformPosition(new Vector3f(q.positions[v*3],q.positions[v*3+1],q.positions[v*3+2]));
+                vertices.add(new float[]{p.x,p.y,p.z,q.uvs[v*2],q.uvs[v*2+1]+frame,0,0,1});
+            }
+            batches.add(new Batch(i,vertices,first));first+=vertices.size();
+        }
+        if(first==0)return;
+        GL30.glBindVertexArray(vao);GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER,vbo);
+        for(int i=0;i<4;i++)GL20.glEnableVertexAttribArray(i);
+        GL20.glVertexAttribPointer(0,3,GL11.GL_FLOAT,false,48,0);GL20.glVertexAttribPointer(1,2,GL11.GL_FLOAT,false,48,12);
+        GL20.glVertexAttribPointer(2,4,GL11.GL_FLOAT,false,48,20);GL20.glVertexAttribPointer(3,3,GL11.GL_FLOAT,false,48,36);
+        upload(batches,1,1,1,1);bind(dynamicMask);drawArrays(GL11.GL_TRIANGLES,0,first);
+        net.everla.reimaginedysm.gpu.RenderMetrics.add("dynamicMaskVertices",first);
+    }
+
     private static void outlineMaskUniforms(int program,boolean atlasPass,Matrix4f projection) {
         uniform(program,"silhouetteMaskEnabled",1);uniform(program,"silhouetteAtlas",atlasPass?1:0);uniform(program,"silhouetteMask",4);
         GL20.glUniform4f(location(program,"silhouetteViewport"),silhouetteViewport[0],silhouetteViewport[1],silhouetteWidth,silhouetteHeight);
@@ -312,17 +449,18 @@ public final class GroupEffectRenderer {
         RenderSystem.enableBlend();RenderSystem.defaultBlendFunc();
         int[] viewport=new int[4];GL11.glGetIntegerv(GL11.GL_VIEWPORT,viewport);
         for(int pass=1;pass<=2;pass++) {
-            if(pass==2 && !model.isTranslucentTexture(textureIndex)) continue;
+            if(phase==1 && pass==2 || phase==2 && pass==1 || pass==2 && !model.isTranslucentTexture(textureIndex)) continue;
             outlineDepth(pass==1);uniform(skinSurface,"alphaMode",pass);
             for(var range:mesh.ranges) {
                 var bone=model.bakedBones.get(range.bone());
                 if((part!=0 && bone.partMask!=part && bone.partMask!=3) || !bone.style.outline() || bone.style.outlineWidth()==0) continue;
                 rgb(skinSurface,"tint",outlineColor(model,range.bone(),textureIndex),1);uniform(skinSurface,"glowing",bone.glow?1:0);
                 float width=bone.style.outlineWidth();int steps=(int)Math.ceil(width);
-                for(int dy=-steps;dy<=steps;dy++) for(int dx=-steps;dx<=steps;dx++) if(dx!=0 || dy!=0) {
-                    matrix(skinSurface,new Matrix4f().translation(dx*width/steps*2f/viewport[2],dy*width/steps*2f/viewport[3],.00001f).mul(RenderSystem.getProjectionMatrix()));
-                    GL11.glDrawArrays(GL11.GL_TRIANGLES,range.first(),range.count());
-                }
+                uniform(skinSurface,"outlineSteps",steps);
+                GL20.glUniform2f(location(skinSurface,"outlinePixelStep"),width/steps*2f/viewport[2],width/steps*2f/viewport[3]);
+                drawArraysInstanced(GL11.GL_TRIANGLES,range.first(),range.count(),(steps*2+1)*(steps*2+1)-1);
+                uniform(skinSurface,"outlineSteps",0);
+
             }
         }
     }
@@ -353,6 +491,7 @@ public final class GroupEffectRenderer {
         RenderSystem.colorMask(true,true,true,true);GL30.glClearBufferfv(GL11.GL_COLOR,0,new float[]{0,0,0,0});
         GL30.glBindVertexArray(mesh.vao);
         for(int band=0;band<3;band++) for(var range:mesh.ranges) {
+            if(model.overlayOnly && band!=2)continue;
             var bone=model.bakedBones.get(range.bone());
             if(part!=0 && bone.partMask!=part && bone.partMask!=3) continue;
             int program=band!=2 && bone.style.cosmic()?skinCosmic:skinMaterial;
@@ -360,19 +499,19 @@ public final class GroupEffectRenderer {
             uniform(program,"alphaMode",band==2?0:band+1);GL20.glUniform4f(location(program,"color"),1,1,1,1);
             if(program==skinCosmic) {cosmicUniforms(program,bone.style,preview,light,model,bone.cosmicEffect);scalar(program,"lightmix",0);}
             else uniform(program,"maskOnly",band==2?1:0);
-            GL11.glDrawArrays(GL11.GL_TRIANGLES,range.first(),range.count());
+            drawArrays(GL11.GL_TRIANGLES,range.first(),range.count());
         }
         instance.ensureGroupBuffers(mesh);
         GlStateManager._glUseProgram(entityCompute);
         uniform(entityCompute,"atlasLayout",5);
-        uniform(entityCompute,"atlasSize",atlasSize);uniform(entityCompute,"overlay",overlay);uniform(entityCompute,"outlineCount",0);
+        uniform(entityCompute,"atlasSize",atlasSize);uniform(entityCompute,"overlay",overlay);uniform(entityCompute,"outlineCount",0);uniform(entityCompute,"sourceFirst",0);
         matrix(entityCompute,RenderSystem.getProjectionMatrix());
         GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,0,mesh.vbo);
         GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,1,instance.groupVbo());
         GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,2,bones);
         dispatchGroupEntity(mesh.vertices);
         GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER,framebuffer);GL11.glViewport(viewport[0],viewport[1],viewport[2],viewport[3]);
-        gpuEntityPass(model,mesh,instance,part,0,texture,true,true,r,g,b,alpha);
+        if(!model.overlayOnly && phase!=2)gpuEntityPass(model,mesh,instance,part,0,texture,true,true,r,g,b,alpha);
         if(!net.everla.reimaginedysm.compat.oculus.OculusCompat.isRenderingShadowPass()
                 && !net.everla.reimaginedysm.compat.oculus.ShaderOutlineCompat.isEnabled()) {
             for(var range:mesh.ranges) {
@@ -383,14 +522,14 @@ public final class GroupEffectRenderer {
                     Matrix4f projected=new Matrix4f().translation(dx*width/steps*2f/viewport[2],dy*width/steps*2f/viewport[3],.00001f).mul(RenderSystem.getProjectionMatrix());
                     bakeGpuOutline(mesh,range,bones,triangles,projected,framebuffer,viewport,texture);
                     Matrix4f shifted=new Matrix4f(RenderSystem.getProjectionMatrix()).invert().mul(projected);
-                    GlStateManager._glUseProgram(entityCompute);GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,0,mesh.vbo);GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,1,instance.groupVbo());GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,2,bones);uniform(entityCompute,"outlineFirst",range.first());uniform(entityCompute,"outlineCount",range.count());
-                    GL20.glUniformMatrix4fv(location(entityCompute,"outlineTransform"),false,shifted.get(new float[16]));dispatchGroupEntity(mesh.vertices);
+                    GlStateManager._glUseProgram(entityCompute);GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,0,mesh.vbo);GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,1,instance.groupVbo());GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,2,bones);uniform(entityCompute,"sourceFirst",range.first());uniform(entityCompute,"outlineFirst",range.first());uniform(entityCompute,"outlineCount",range.count());
+                    GL20.glUniformMatrix4fv(location(entityCompute,"outlineTransform"),false,shifted.get(new float[16]));dispatchGroupEntity(range.count());
                     gpuEntityRange(instance,mesh.vertices,range,2,texture,false,true,((color>>16)&255)/255f,((color>>8)&255)/255f,(color&255)/255f,alpha);
                 }
             }
         }
-        gpuEntityPass(model,mesh,instance,part,0,texture,false,true,r,g,b,alpha);
-        if(model.isTranslucentTexture(textureIndex)) gpuEntityPass(model,mesh,instance,part,1,texture,false,false,r,g,b,alpha);
+        if(!model.overlayOnly && phase!=2)gpuEntityPass(model,mesh,instance,part,0,texture,false,true,r,g,b,alpha);
+        if(!model.overlayOnly && phase!=1 && model.isTranslucentTexture(textureIndex)) gpuEntityPass(model,mesh,instance,part,1,texture,false,false,r,g,b,alpha);
     }
 
     private static void bakeGpuOutline(GroupGpuMesh mesh,GroupGpuMesh.Range range,int bones,int triangles,Matrix4f projected,int framebuffer,int[] viewport,ResourceLocation texture) {
@@ -400,13 +539,13 @@ public final class GroupEffectRenderer {
         GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,0,bones);GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,1,mesh.vbo);
         bind(skinMaterial);gpuSurfaceUniforms(skinMaterial,mesh);outlineMaskUniforms(skinMaterial,true,projected);
         uniform(skinMaterial,"materialPass",1);uniform(skinMaterial,"maskOnly",1);atlasUniforms(skinMaterial,triangles,2);uniform(skinMaterial,"alphaMode",0);
-        GL30.glBindVertexArray(mesh.vao);GL11.glDrawArrays(GL11.GL_TRIANGLES,range.first(),range.count());
+        GL30.glBindVertexArray(mesh.vao);drawArrays(GL11.GL_TRIANGLES,range.first(),range.count());
         GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER,framebuffer);GL11.glViewport(viewport[0],viewport[1],viewport[2],viewport[3]);
     }
 
     private static void dispatchGroupEntity(int count) {
         GL43.glMemoryBarrier(GL43.GL_SHADER_STORAGE_BARRIER_BIT);
-        GL43.glDispatchCompute((count+63)/64,1,1);
+        dispatchCompute((count+63)/64,1,1);
         GL43.glMemoryBarrier(GL43.GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT|GL43.GL_SHADER_STORAGE_BARRIER_BIT);
     }
 
@@ -429,10 +568,10 @@ public final class GroupEffectRenderer {
             if(band==2) outlineDepth(depthWrite);else RenderSystem.depthMask(depthWrite);
             RenderSystem.colorMask(!depthOnly,!depthOnly,!depthOnly,!depthOnly);
             GL30.glBindVertexArray(instance.groupVao());GL20.glDisableVertexAttribArray(1);GL20.glVertexAttrib4f(1,r,g,b,a);
-            if(range!=null) GL11.glDrawArrays(GL11.GL_TRIANGLES,band*count+range.first(),range.count());
+            if(range!=null) drawArrays(GL11.GL_TRIANGLES,band*count+range.first(),range.count());
             else for(var run:mesh.ranges) {
                 var bone=model.bakedBones.get(run.bone());
-                if(part==0 || bone.partMask==part || bone.partMask==3) GL11.glDrawArrays(GL11.GL_TRIANGLES,band*count+run.first(),run.count());
+                if(part==0 || bone.partMask==part || bone.partMask==3) drawArrays(GL11.GL_TRIANGLES,band*count+run.first(),run.count());
             }
         } finally {try {if(shader!=null) shader.clear();} finally {type.clearRenderState();}}
     }
@@ -445,7 +584,7 @@ public final class GroupEffectRenderer {
 
     private static void draw(GeoModel model,List<Batch> batches,int textureIndex,int light,int overlay,
                              float r,float g,float b,float alpha,ResourceLocation texture,boolean preview) {
-        try(var saved=new DrawState()) {
+        try(var saved=coordinate()) {
             if(net.everla.reimaginedysm.compat.oculus.OculusCompat.isShaderPackInUse()) {
                 drawMaterials(model,batches,textureIndex,light,overlay,r,g,b,alpha,texture,preview);
             } else drawSurface(model,batches,textureIndex,light,overlay,r,g,b,alpha,texture,preview);
@@ -484,6 +623,7 @@ public final class GroupEffectRenderer {
             GlStateManager._activeTexture(GL13.GL_TEXTURE0);
             GlStateManager._bindTexture(Minecraft.getInstance().getTextureManager().getTexture(texture).getId());
             for(int band=0;band<3;band++) for(var batch:batches) {
+                if(model.overlayOnly && band!=2)continue;
                 var style=model.bakedBones.get(batch.bone).style;
                 int p=band!=2 && style.cosmic()?materialCosmic:material;
                 GlStateManager._glUseProgram(p);
@@ -494,7 +634,7 @@ public final class GroupEffectRenderer {
                     // This texture is albedo, not a second lit/fogged framebuffer.
                     scalar(p,"lightmix",0);
                 } else uniform(p,"maskOnly",band==2?1:0);
-                GL11.glDrawArrays(GL11.GL_TRIANGLES,batch.first,batch.triangles.size());
+                drawArrays(GL11.GL_TRIANGLES,batch.first,batch.triangles.size());
             }
             // Entity vertices remain in view space. Normals, overlay and light are
             // supplied in Minecraft's format, so Iris generates every pack output.
@@ -507,7 +647,7 @@ public final class GroupEffectRenderer {
                 translucent.add(new Batch(batch.bone,batch.triangles.subList(i,i+3),batch.first+i));
             translucent.sort(Comparator.comparingDouble(batch->batch.triangles.stream().mapToDouble(v->v[2]).average().orElse(0)));
             // A depth prepass keeps expanded outline copies behind all opaque parts.
-            entityPass(model,batches,count,0,texture,true,true,r,g,b,alpha);
+            if(!model.overlayOnly && phase!=2)entityPass(model,batches,count,0,texture,true,true,r,g,b,alpha);
             if(!net.everla.reimaginedysm.compat.oculus.OculusCompat.isRenderingShadowPass()
                     && !net.everla.reimaginedysm.compat.oculus.ShaderOutlineCompat.isEnabled()) {
                 int[] viewport=new int[4];GL11.glGetIntegerv(GL11.GL_VIEWPORT,viewport);
@@ -529,16 +669,19 @@ public final class GroupEffectRenderer {
                     }
                 }
             }
-            entityPass(model,batches,count,0,texture,false,true,r,g,b,alpha);
-            entityPass(model,translucent,count,1,texture,false,false,r,g,b,alpha);
+            if(!model.overlayOnly && phase!=2)entityPass(model,batches,count,0,texture,false,true,r,g,b,alpha);
+            if(!model.overlayOnly && phase!=1)entityPass(model,translucent,count,1,texture,false,false,r,g,b,alpha);
         }
     }
 
+    private record SourceSize(int id,int[] size) {}
+    private static final Map<ResourceLocation,SourceSize> sourceSizes=new HashMap<>();
     private static int[] sourceSize(ResourceLocation texture) {
         GlStateManager._activeTexture(GL13.GL_TEXTURE0);
-        GlStateManager._bindTexture(Minecraft.getInstance().getTextureManager().getTexture(texture).getId());
-        return new int[]{GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D,0,GL11.GL_TEXTURE_WIDTH),
-                GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D,0,GL11.GL_TEXTURE_HEIGHT)};
+        int id=Minecraft.getInstance().getTextureManager().getTexture(texture).getId();GlStateManager._bindTexture(id);
+        var cached=sourceSizes.get(texture);if(cached!=null&&cached.id()==id)return cached.size();
+        int[] size={GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D,0,GL11.GL_TEXTURE_WIDTH),GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D,0,GL11.GL_TEXTURE_HEIGHT)};
+        sourceSizes.put(texture,new SourceSize(id,size));return size;
     }
     private static void atlasUniforms(int program,int triangles,int band) {
         uniform(program,"atlasLayout",5);uniform(program,"atlasSize",atlasSize);
@@ -550,18 +693,25 @@ public final class GroupEffectRenderer {
             try {
                 material=materialProgram("/group_material.fsh");materialCosmic=materialProgram("/group_cosmic.fsh");
             } catch(Exception ex) {throw new IllegalStateException("Cannot initialize group materials",ex);}
-            atlas=GL11.glGenTextures();atlasFbo=GL30.glGenFramebuffers();
             entityVao=GL30.glGenVertexArrays();entityVbo=GL15.glGenBuffers();
         }
-        GlStateManager._activeTexture(GL13.GL_TEXTURE0);GlStateManager._bindTexture(atlas);
-        if(atlasSize!=size) {
+        var target=atlasTargets.get(size);
+        if(target==null) {
+            target=new AtlasTarget(GL11.glGenTextures(),GL30.glGenFramebuffers(),size);atlasTargets.put(size,target);
+            GlStateManager._activeTexture(GL13.GL_TEXTURE0);GlStateManager._bindTexture(target.texture());
             GL11.glTexImage2D(GL11.GL_TEXTURE_2D,0,GL11.GL_RGBA8,size,size,0,GL11.GL_RGBA,GL11.GL_UNSIGNED_BYTE,(ByteBuffer)null);
-            GL11.glTexParameteri(GL11.GL_TEXTURE_2D,GL11.GL_TEXTURE_MIN_FILTER,GL11.GL_NEAREST);
-            GL11.glTexParameteri(GL11.GL_TEXTURE_2D,GL11.GL_TEXTURE_MAG_FILTER,GL11.GL_NEAREST);
-            GL11.glTexParameteri(GL11.GL_TEXTURE_2D,GL11.GL_TEXTURE_WRAP_S,GL12.GL_CLAMP_TO_EDGE);
-            GL11.glTexParameteri(GL11.GL_TEXTURE_2D,GL11.GL_TEXTURE_WRAP_T,GL12.GL_CLAMP_TO_EDGE);
-            atlasSize=size;
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D,GL11.GL_TEXTURE_MIN_FILTER,GL11.GL_NEAREST);GL11.glTexParameteri(GL11.GL_TEXTURE_2D,GL11.GL_TEXTURE_MAG_FILTER,GL11.GL_NEAREST);
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D,GL11.GL_TEXTURE_WRAP_S,GL12.GL_CLAMP_TO_EDGE);GL11.glTexParameteri(GL11.GL_TEXTURE_2D,GL11.GL_TEXTURE_WRAP_T,GL12.GL_CLAMP_TO_EDGE);
+            net.everla.reimaginedysm.gpu.RenderMetrics.add("atlasAllocations",1);
         }
+        atlas=target.texture();atlasFbo=target.framebuffer();atlasSize=size;
+        long idle=atlasTargets.values().stream().filter(t->t.texture()!=atlas).mapToLong(t->4L*t.size()*t.size()).sum();
+        var iterator=atlasTargets.entrySet().iterator();
+        while(idle>ATLAS_IDLE_BUDGET && iterator.hasNext()) {
+            var old=iterator.next().getValue();if(old.texture()==atlas)continue;
+            GL30.glDeleteFramebuffers(old.framebuffer());GlStateManager._deleteTexture(old.texture());idle-=4L*old.size()*old.size();iterator.remove();
+        }
+        GlStateManager._activeTexture(GL13.GL_TEXTURE0);GlStateManager._bindTexture(atlas);
         GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER,atlasFbo);
         GL30.glFramebufferTexture2D(GL30.GL_DRAW_FRAMEBUFFER,GL30.GL_COLOR_ATTACHMENT0,GL11.GL_TEXTURE_2D,atlas,0);
         GL11.glDrawBuffer(GL30.GL_COLOR_ATTACHMENT0);
@@ -618,7 +768,7 @@ public final class GroupEffectRenderer {
             if(band==2) outlineDepth(depthWrite);else RenderSystem.depthMask(depthWrite);
             RenderSystem.colorMask(!depthOnly,!depthOnly,!depthOnly,!depthOnly);
             GL30.glBindVertexArray(entityVao);GL20.glVertexAttrib4f(1,r,g,b,a);
-            for(var batch:batches) GL11.glDrawArrays(GL11.GL_TRIANGLES,band*count+batch.first,batch.triangles.size());
+            for(var batch:batches) drawArrays(GL11.GL_TRIANGLES,band*count+batch.first,batch.triangles.size());
         } finally {
             try {if(shader!=null) shader.clear();}
             finally {type.clearRenderState();}
@@ -673,13 +823,14 @@ public final class GroupEffectRenderer {
             bind(surface);surfaceUniforms(light,overlay);uniform(surface,"mode",0);uniform(surface,"alphaMode",1);
             // Opaque geometry establishes occlusion before expanded silhouettes are drawn.
             RenderSystem.colorMask(false,false,false,false);
-            for(var batch:batches) emit(batch,r,g,b,alpha,light,model);
+            if(phase!=2)for(var batch:batches) emit(batch,r,g,b,alpha,light,model);
             RenderSystem.colorMask(true,true,true,true);RenderSystem.depthMask(false);
             RenderSystem.enableBlend();RenderSystem.defaultBlendFunc();
             uniform(surface,"mode",1);
             uniform(surface,"alphaMode",0);
             int[] viewport=new int[4];GL11.glGetIntegerv(GL11.GL_VIEWPORT,viewport);
             for(int outlinePass=1;outlinePass<=2;outlinePass++) {
+                if(phase==2)continue;
                 if(outlinePass==2 && !model.isTranslucentTexture(textureIndex)) continue;
                 outlineDepth(outlinePass==1);uniform(surface,"alphaMode",outlinePass);
                 for(var batch:batches) {
@@ -706,10 +857,12 @@ public final class GroupEffectRenderer {
                 translucent.add(new Batch(batch.bone,batch.triangles.subList(i,i+3),batch.first+i));
             translucent.sort(Comparator.comparingDouble(batch->batch.triangles.stream().mapToDouble(v->v[2]).average().orElse(0)));
             for(int pass=1;pass<=2;pass++) {
+                if(phase==1&&pass==2||phase==2&&pass==1)continue;
                 RenderSystem.depthMask(pass==1);
                 GroupStyle previousStyle=null;
                 int previousProgram=0;
                 for(var batch:pass==1?batches:translucent) {
+                    if(model.overlayOnly)continue;
                     var style=model.bakedBones.get(batch.bone).style;
                     int program=style.cosmic()?cosmic:surface;
                     if(program!=previousProgram) {
@@ -727,7 +880,7 @@ public final class GroupEffectRenderer {
     }
     private static void emit(Batch batch,float r,float g,float b,float a,int light,GeoModel model) {
         if(currentProgram==surface) uniform(surface,"glowing",model.bakedBones.get(batch.bone).glow?1:0);
-        GL11.glDrawArrays(GL11.GL_TRIANGLES,batch.first,batch.triangles.size());
+        drawArrays(GL11.GL_TRIANGLES,batch.first,batch.triangles.size());
     }
     private static void upload(List<Batch> batches,float r,float g,float b,float a) {
         int vertices=0;
@@ -776,6 +929,7 @@ public final class GroupEffectRenderer {
         int ticks=mc.level==null?(int)(net.minecraft.Util.getMillis()/50): (int)mc.level.getGameTime();
         int count=net.everla.ysmJsLib.CosmicTextures.bind(model.scripts,effect,ticks);
         if(count==0){updateStars(ticks);count=10;}
+        net.everla.reimaginedysm.gpu.CosmicLayers.bind(program);
         uniform(program,"cosmiccount",count);
         scalar(program,"cosmicoutof",count*10.1f);
         uniform(program,"stars",3);uniform(program,"time",ticks);
@@ -789,61 +943,78 @@ public final class GroupEffectRenderer {
         rgb(program,"astralTint",style.astralColor(),style.astralAlpha());
     }
 
+    private record DefaultSprite(java.awt.image.BufferedImage image,int[] sequence) {}
+    private static java.util.concurrent.CompletableFuture<List<DefaultSprite>> defaultSprites;
+    private static int lastStarTick=Integer.MIN_VALUE;
+    public static synchronized void prepareStars() {
+        if(stars!=0||defaultSprites!=null)return;
+        defaultSprites=java.util.concurrent.CompletableFuture.supplyAsync(()->{
+            try {
+                var sprites=new ArrayList<DefaultSprite>();
+                for(int i=0;i<10;i++) {
+                    String path="/assets/rysm/textures/cosmic/cosmic_"+i+".png";
+                    java.awt.image.BufferedImage image;
+                    try(var in=GroupEffectRenderer.class.getResourceAsStream(path)){image=ImageIO.read(in);}
+                    var meta=com.google.gson.JsonParser.parseString(ShaderUtil.loadResource(path+".mcmeta")).getAsJsonObject().getAsJsonObject("animation");
+                    int duration=meta.has("frametime")?meta.get("frametime").getAsInt():1;var sequence=new ArrayList<Integer>();
+                    if(meta.has("frames"))for(var f:meta.getAsJsonArray("frames")) {
+                        int index=f.isJsonObject()?f.getAsJsonObject().get("index").getAsInt():f.getAsInt();
+                        int time=f.isJsonObject()&&f.getAsJsonObject().has("time")?f.getAsJsonObject().get("time").getAsInt():duration;
+                        for(int n=0;n<time;n++)sequence.add(index);
+                    }else for(int f=0;f<image.getHeight()/16;f++)for(int n=0;n<duration;n++)sequence.add(f);
+                    sprites.add(new DefaultSprite(image,sequence.stream().mapToInt(Integer::intValue).toArray()));
+                }
+                return List.copyOf(sprites);
+            }catch(Exception failure){throw new java.util.concurrent.CompletionException(failure);}
+        });
+    }
+
     private static void updateStars(int ticks) {
         GlStateManager._activeTexture(GL13.GL_TEXTURE0+3);
         if(stars==0) {
+            prepareStars();
             stars=GL11.glGenTextures();GL11.glBindTexture(GL30.GL_TEXTURE_2D_ARRAY,stars);
             GL12.glTexImage3D(GL30.GL_TEXTURE_2D_ARRAY,0,GL11.GL_RGBA8,16,16,10,0,GL11.GL_RGBA,GL11.GL_UNSIGNED_BYTE,(ByteBuffer)null);
             GL11.glTexParameteri(GL30.GL_TEXTURE_2D_ARRAY,GL11.GL_TEXTURE_MIN_FILTER,GL11.GL_NEAREST);
             GL11.glTexParameteri(GL30.GL_TEXTURE_2D_ARRAY,GL11.GL_TEXTURE_MAG_FILTER,GL11.GL_NEAREST);
             Arrays.fill(lastFrames,-1);
-            try {
-                for(int i=0;i<10;i++) {
-                    String path="/assets/rysm/textures/cosmic/cosmic_"+i+".png";
-                    java.awt.image.BufferedImage image;
-                    try(var in=GroupEffectRenderer.class.getResourceAsStream(path)) {image=ImageIO.read(in);}
-                    ByteBuffer data=MemoryUtil.memAlloc(image.getWidth()*image.getHeight()*4);
-                    for(int y=0;y<image.getHeight();y++) for(int x=0;x<16;x++) {
-                        int c=image.getRGB(x,y);data.put((byte)(c>>16)).put((byte)(c>>8)).put((byte)c).put((byte)(c>>>24));
-                    }
-                    data.flip();pixels.add(data);
-                    var meta=com.google.gson.JsonParser.parseString(ShaderUtil.loadResource(path+".mcmeta")).getAsJsonObject().getAsJsonObject("animation");
-                    int duration=meta.has("frametime")?meta.get("frametime").getAsInt():1;
-                    var sequence=new ArrayList<Integer>();
-                    if(meta.has("frames")) for(var f:meta.getAsJsonArray("frames")) {
-                        int index=f.isJsonObject()?f.getAsJsonObject().get("index").getAsInt():f.getAsInt();
-                        int time=f.isJsonObject()?f.getAsJsonObject().get("time").getAsInt():duration;
-                        for(int n=0;n<time;n++) sequence.add(index);
-                    } else for(int f=0;f<image.getHeight()/16;f++) for(int n=0;n<duration;n++) sequence.add(f);
-                    frames.add(sequence.stream().mapToInt(Integer::intValue).toArray());
-                }
-            } catch(Exception ex) {throw new IllegalStateException("Cannot load Avaritia cosmic sprites",ex);}
+            prepareStars();
+            for(var sprite:defaultSprites.join()) {
+                var image=sprite.image();ByteBuffer data=MemoryUtil.memAlloc(image.getWidth()*image.getHeight()*4);
+                for(int y=0;y<image.getHeight();y++)for(int x=0;x<16;x++){int c=image.getRGB(x,y);data.put((byte)(c>>16)).put((byte)(c>>8)).put((byte)c).put((byte)(c>>>24));}
+                data.flip();pixels.add(data);frames.add(sprite.sequence());
+            }
+            defaultSprites=null;
         } else GL11.glBindTexture(GL30.GL_TEXTURE_2D_ARRAY,stars);
-        for(int i=0;i<10;i++) {
-            int[] seq=frames.get(i);int frame=seq[Math.floorMod(ticks,seq.length)];
-            if(frame==lastFrames[i]) continue;
-            ByteBuffer data=pixels.get(i).duplicate();data.position(frame*1024).limit((frame+1)*1024);
-            GL12.glTexSubImage3D(GL30.GL_TEXTURE_2D_ARRAY,0,0,0,i,16,16,1,GL11.GL_RGBA,GL11.GL_UNSIGNED_BYTE,data);
-            lastFrames[i]=frame;
+        if(lastStarTick==ticks){GlStateManager._activeTexture(GL13.GL_TEXTURE0);return;}lastStarTick=ticks;
+        try(var unpack=new ShaderUtil.SavedPixelUnpackState()) {
+            for(int i=0;i<10;i++) {
+                int[] seq=frames.get(i);int frame=seq[Math.floorMod(ticks,seq.length)];
+                if(frame==lastFrames[i]) continue;
+                ByteBuffer data=pixels.get(i).duplicate();data.position(frame*1024).limit((frame+1)*1024);
+                GL12.glTexSubImage3D(GL30.GL_TEXTURE_2D_ARRAY,0,0,0,i,16,16,1,GL11.GL_RGBA,GL11.GL_UNSIGNED_BYTE,data);
+                lastFrames[i]=frame;
+            }
         }
         GlStateManager._activeTexture(GL13.GL_TEXTURE0);
     }
 
     public static void shutdown() {
+        net.everla.reimaginedysm.gpu.RenderMetrics.clear();
         for(int program:new int[]{surface,cosmic,material,materialCosmic,skinSurface,skinCosmic,skinMaterial,entityCompute,solidsCompute}) if(program!=0) GL20.glDeleteProgram(program);
         for(int buffer:new int[]{vbo,entityVbo}) if(buffer!=0) GL15.glDeleteBuffers(buffer);
         for(int array:new int[]{vao,entityVao}) if(array!=0) GL30.glDeleteVertexArrays(array);
+        if(dynamicMask!=0){GL20.glDeleteProgram(dynamicMask);dynamicMask=0;}
         if(silhouetteFbo!=0)GL30.glDeleteFramebuffers(silhouetteFbo);
         if(silhouetteTexture!=0)GlStateManager._deleteTexture(silhouetteTexture);
         silhouetteFbo=silhouetteTexture=silhouetteWidth=silhouetteHeight=0;
-        if(atlasFbo!=0) GL30.glDeleteFramebuffers(atlasFbo);
-        if(atlas!=0) GlStateManager._deleteTexture(atlas);
+        for(var target:atlasTargets.values()){GL30.glDeleteFramebuffers(target.framebuffer());GlStateManager._deleteTexture(target.texture());}atlasTargets.clear();
         if(stars!=0) GL11.glDeleteTextures(stars);
-        net.everla.ysmJsLib.CosmicTextures.clear();
-        pixels.forEach(MemoryUtil::memFree);pixels.clear();frames.clear();
+        net.everla.ysmJsLib.CosmicTextures.clear();net.everla.reimaginedysm.gpu.CosmicLayers.clear();
+        pixels.forEach(MemoryUtil::memFree);pixels.clear();frames.clear();defaultSprites=null;lastStarTick=Integer.MIN_VALUE;
         surface=cosmic=material=materialCosmic=vbo=entityVbo=vao=entityVao=atlasFbo=atlas=atlasSize=stars=0;
         skinSurface=skinCosmic=skinMaterial=entityCompute=solidsCompute=0;
-        uniformLocations.clear();
+        uniformLocations.clear();cpuRanges.clear();sourceSizes.clear();solidShapes.clear();
         failed=false;
     }
 

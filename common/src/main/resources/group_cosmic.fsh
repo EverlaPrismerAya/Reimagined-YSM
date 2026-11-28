@@ -2,6 +2,9 @@
 
 #define M_PI 3.1415926535897932384626433832795
 
+uniform bool precomputedLayers;
+uniform mat4 cosmicRotation[16];
+uniform vec4 cosmicLayer[16];
 uniform int cosmiccount;
 uniform float cosmicoutof;
 
@@ -83,10 +86,13 @@ void main (void)
 		int mult = 16-i;
 	
 		// get semi-random stuff
+        float rand1=0.0,rand2=0.0;
+        if(precomputedLayers)ray=dir*cosmicRotation[i];
+        else {
 		int j = i + 7;
-		float rand1 = (j * j * 4321 + j * 8) * 2.0;
+		rand1 = (j * j * 4321 + j * 8) * 2.0;
 		int k = j + 1;
-		float rand2 = (k * k * k * 239 + k * 37) * 3.6;
+		rand2 = (k * k * k * 239 + k * 37) * 3.6;
 		float rand3 = rand1 * 347.4 + rand2 * 63.4;
 		
 		// random rotation matrix by random rotation around random axis
@@ -95,12 +101,14 @@ void main (void)
 		// apply
 		ray = dir * rotationMatrix(axis, mod(rand3, 2*M_PI));
 		
+        }
+
 		// calcuate the UVs from the final ray
 		float rawu = 0.5 + (atan(ray.z,ray.x)/(2*M_PI));
 		float rawv = 0.5 + (asin(ray.y)/M_PI);
 		
 		// get UV scaled for layers and offset by time;
-		float scale = mult*0.5 + 2.75;
+		float scale = precomputedLayers?cosmicLayer[i].w:mult*0.5 + 2.75;
 		float u = rawu * scale * externalScale;
 		//float v = (rawv + time * 0.00006) * scale * 0.6;
 		float v = (rawv + time * 0.0002 * oneOverExternalScale) * scale * 0.6 * externalScale;
@@ -152,9 +160,9 @@ void main (void)
 			float a = tcol.r * (0.5 + (1.0/mult) * 1.0) * (1.0-smoothstep(0.15, 0.48, abs(rawv-0.5)));
 			
 			// get fancy colours
-			float r = (mod(rand1, 29.0)/29.0) * 0.3 + 0.4;
-	    	float g = (mod(rand2, 35.0)/35.0) * 0.4 + 0.6;
-	    	float b = (mod(rand1, 17.0)/17.0) * 0.3 + 0.7;
+			float r = precomputedLayers?cosmicLayer[i].r:(mod(rand1, 29.0)/29.0) * 0.3 + 0.4;
+		float g = precomputedLayers?cosmicLayer[i].g:(mod(rand2, 35.0)/35.0) * 0.4 + 0.6;
+		float b = precomputedLayers?cosmicLayer[i].b:(mod(rand1, 17.0)/17.0) * 0.3 + 0.7;
 			
 			// mix the colours
 			//col = col*(1-a) + vec4(r,g,b,1)*a;

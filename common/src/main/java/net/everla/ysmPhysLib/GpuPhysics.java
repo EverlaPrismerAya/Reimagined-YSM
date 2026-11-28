@@ -32,7 +32,7 @@ public final class GpuPhysics {
     private GpuPhysics() {}
 
     public static String getLastReason() {return lastReason;}
-    static boolean active(float[] parameters) {return instances.containsKey(parameters);}
+    static boolean active(float[] parameters) {var islands=IslandPhysics.find(parameters);return islands==null?instances.containsKey(parameters):islands.active();}
 
     static boolean prepare(AnimatedGeoModel owner,Matrix4f root,double time,boolean paused,Object world,
                            double x,double y,double z,int fps,boolean textured,java.util.function.Function<net.minecraft.world.phys.AABB,Iterable<net.minecraft.world.phys.shapes.VoxelShape>> blockCollisions) {
@@ -102,6 +102,7 @@ public final class GpuPhysics {
 
     /** Returns the instance's final bone SSBO, or 0 after applying CPU fallback to parameters. */
     public static int render(float[] parameters,Matrix4f renderRoot,int packedLight) {
+        var islands=IslandPhysics.find(parameters);if(islands!=null)return islands.render(parameters,renderRoot,packedLight);
         var instance=instances.get(parameters);
         if(instance==null) return 0;
         try(var saved=new GpuPhysKernel.SavedState()) {
@@ -115,6 +116,7 @@ public final class GpuPhysics {
     }
 
     public static void fallback(float[] parameters) {
+        var islands=IslandPhysics.find(parameters);if(islands!=null){islands.fallback(parameters);return;}
         var instance=instances.get(parameters);
         if(instance==null) return;
         var owner=instance.owner.get();
@@ -131,31 +133,28 @@ public final class GpuPhysics {
     }
 
     /** Material clipping needs CPU-readable current matrices, but the solver retains GPU ownership. */
-    public static boolean readRenderMatrices(float[] parameters,Matrix4f root,int light,
-                                              Matrix4f[] matrices,boolean[] visible) {
-        if(!active(parameters)) return false;
-        int buffer=render(parameters,root,light);
-        if(buffer==0) return false;
-        var instance=instances.get(parameters);
-        var data=org.lwjgl.system.MemoryUtil.memAlloc(matrices.length*144);
+    public static boolean readRenderMatrices(float[] parameters,Matrix4f root,int light,Matrix4f[] matrices,boolean[] visible) {
+        return readRenderMatrices(parameters,root,light,matrices,visible,null);
+    }
+    public static boolean readRenderMatrices(float[] parameters,Matrix4f root,int light,Matrix4f[] matrices,boolean[] visible,boolean[] needed) {
+        var islands=IslandPhysics.find(parameters);if(islands!=null)return islands.read(parameters,root,light,matrices,visible,needed);
+        if(!active(parameters))return false;
+        int buffer=render(parameters,root,light);if(buffer==0)return false;
+        var data=org.lwjgl.system.MemoryUtil.memAlloc(144);
         int previous=org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL43.GL_SHADER_STORAGE_BUFFER_BINDING);
         try {
-            org.lwjgl.opengl.GL42.glMemoryBarrier(org.lwjgl.opengl.GL43.GL_BUFFER_UPDATE_BARRIER_BIT);
-            GL15.glBindBuffer(org.lwjgl.opengl.GL43.GL_SHADER_STORAGE_BUFFER,buffer);
-            GL15.glGetBufferSubData(org.lwjgl.opengl.GL43.GL_SHADER_STORAGE_BUFFER,0,data);
-            for(int sorted=0;sorted<matrices.length;sorted++) {
-                int original=instance.kernel.model.original[sorted];
-                matrices[original]=new Matrix4f(data.asFloatBuffer().position(original*36));
-                visible[original]=data.getInt(original*144+132)==0;
+            org.lwjgl.opengl.GL42.glMemoryBarrier(org.lwjgl.opengl.GL43.GL_BUFFER_UPDATE_BARRIER_BIT);GL15.glBindBuffer(org.lwjgl.opengl.GL43.GL_SHADER_STORAGE_BUFFER,buffer);
+            for(int i=0;i<matrices.length;i++)if(needed==null||needed[i]) {
+                data.clear();GL15.glGetBufferSubData(org.lwjgl.opengl.GL43.GL_SHADER_STORAGE_BUFFER,(long)i*144,data);
+                matrices[i]=new Matrix4f(data.asFloatBuffer());visible[i]=data.getInt(132)==0;
+                net.everla.reimaginedysm.gpu.RenderMetrics.add("poseReadbackBytes",144);
             }
             return true;
-        } finally {
-            GL15.glBindBuffer(org.lwjgl.opengl.GL43.GL_SHADER_STORAGE_BUFFER,previous);
-            org.lwjgl.system.MemoryUtil.memFree(data);
-        }
+        } finally{GL15.glBindBuffer(org.lwjgl.opengl.GL43.GL_SHADER_STORAGE_BUFFER,previous);org.lwjgl.system.MemoryUtil.memFree(data);}
     }
 
     static void deactivate(float[] parameters) {
+        var islands=IslandPhysics.find(parameters);if(islands!=null){islands.disable(parameters);return;}
         var instance=instances.remove(parameters);
         if(instance!=null) {
             var owner=instance.owner.get();
@@ -182,6 +181,7 @@ public final class GpuPhysics {
         if(--model.users==0) {models.remove(model.definition);model.close();}
     }
     public static void disposeModel(GeoModel model) {
+        IslandPhysics.dispose(model);
         var iterator=instances.entrySet().iterator();
         while(iterator.hasNext()) {
             var entry=iterator.next();
@@ -192,6 +192,7 @@ public final class GpuPhysics {
     }
     /** Called every client tick, including world unloads and frames without any rendered players. */
     public static void tick() {
+        IslandPhysics.tick();
         if(resources.isEmpty()) return;
         RenderSystem.assertOnRenderThread();
         var world=Minecraft.getInstance().level;
@@ -208,6 +209,7 @@ public final class GpuPhysics {
         for(var instance:new ArrayList<>(resources)) if(instance.owner.get()==null) release(instance);
     }
     public static void shutdown() {
+        IslandPhysics.shutdown();
         for(var instance:new ArrayList<>(resources)) release(instance);
         instances.clear();rejected.clear();timings.clear();GpuPhysKernel.shutdown();shaderFailure=null;
     }
@@ -297,7 +299,7 @@ public final class GpuPhysics {
         // Decorative branches never enter inverse(parent) or contact fitting.
         // Their finite zero/nonuniform scales are valid for matrix generation.
         for(int i=0;i<definition.bones.size();i++) for(int component=6;component<9;component++)
-            if(!Float.isFinite(p[i*12+component]) || definition.physicsScale[i] && Math.abs(p[i*12+component])<1e-6f) return false;
+            if(definition.physicsScale[i] && (!Float.isFinite(p[i*12+component]) || Math.abs(p[i*12+component])<1e-6f)) return false;
         if(definition.cubes.isEmpty() && definition.joints.stream().noneMatch(j->j.parameters().bc())) return true;
         var scale=root.getScale(new Vector3f());
         if(root.determinant()<=0 || !uniform(scale.x,scale.y,scale.z)) return false;
@@ -366,7 +368,7 @@ public final class GpuPhysics {
             long started=System.nanoTime();
             var definition=kernel.model.definition;
             boolean rootJump=false;
-            for(int i:definition.order) {
+            for(int i:definition.workOrder) {
                 int parent=definition.bones.get(i).parentIdx;
                 RenderUtils.prepMatrixForBone(definition.bones.get(i),animated[i].set(parent<0?root:animated[parent]),parameters,i*12);
             }

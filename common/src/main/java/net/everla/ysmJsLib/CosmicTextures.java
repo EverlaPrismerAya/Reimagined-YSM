@@ -14,25 +14,47 @@ public final class CosmicTextures {
     private record Frame(int index,int duration) {}
     private record Sprite(ByteBuffer pixels,List<Frame> frames,int duration) {}
     private static final class Texture {
-        int id,size;final List<Sprite> sprites=new ArrayList<>();int[] last;
+        int id,size,lastTick=Integer.MIN_VALUE;final List<Sprite> sprites=new ArrayList<>();int[] last;
         void close(){if(id!=0)GL11.glDeleteTextures(id);sprites.forEach(s->MemoryUtil.memFree(s.pixels));sprites.clear();}
     }
-    private static final LinkedHashMap<String,Texture> CACHE=new LinkedHashMap<>(16,.75f,true);
+    private record Pending(Map<ScriptModel,Boolean> owners,java.util.concurrent.CompletableFuture<Texture> data) {}
+    private static final Map<String,Pending> CACHE=new HashMap<>();
+    public static synchronized void prepare(ScriptModel model) {
+        for(String effect:model.cosmic.keySet()) {
+            String key=model.bundle.digest+":"+effect;
+            var pending=CACHE.computeIfAbsent(key,k->new Pending(new WeakHashMap<>(),java.util.concurrent.CompletableFuture.supplyAsync(()->{
+                try{return load(model,effect);}catch(Exception e){throw new java.util.concurrent.CompletionException(e);}
+            })));
+            pending.owners().put(model,true);
+        }
+    }
+    public static synchronized void tick(){var iterator=CACHE.values().iterator();while(iterator.hasNext()){var pending=iterator.next();if(pending.owners().isEmpty()){release(pending);iterator.remove();}}}
+    public static synchronized void release(ScriptModel model){
+        var iterator=CACHE.entrySet().iterator();while(iterator.hasNext()){var entry=iterator.next();entry.getValue().owners().remove(model);if(entry.getValue().owners().isEmpty()){release(entry.getValue());FAILED.remove(entry.getKey());iterator.remove();}}
+    }
+    private static void release(Pending pending){if(pending.data().isDone()&&!pending.data().isCompletedExceptionally())pending.data().join().close();else pending.data().thenAccept(Texture::close);}
+
     private static final Set<String> FAILED=new HashSet<>();
     public static int bind(ScriptModel model,String effect,int ticks) {
         if(model==null||effect==null||effect.isEmpty())return 0;
         String key=model.bundle.digest+":"+effect;if(FAILED.contains(key))return 0;
-        Texture texture=CACHE.get(key);
-        if(texture==null)try {
-            texture=load(model,effect);CACHE.put(key,texture);
-            if(CACHE.size()>16){var old=CACHE.entrySet().iterator();var e=old.next();e.getValue().close();old.remove();}
+        Texture texture;
+        try {
+            Pending pending;
+            synchronized(CosmicTextures.class){prepare(model);pending=CACHE.get(key);}
+            if(pending==null)throw new IllegalArgumentException("Unknown effect");
+            texture=pending.data().join();
+            if(texture.id==0)upload(texture);
         }catch(Exception e){FAILED.add(key);org.slf4j.LoggerFactory.getLogger("rysmjs").warn("[rysmjs] Cosmic {} uses default textures: {}",key,e.toString());return 0;}
         GlStateManager._activeTexture(GL13.GL_TEXTURE0+3);GL11.glBindTexture(GL30.GL_TEXTURE_2D_ARRAY,texture.id);
-        for(int i=0;i<texture.sprites.size();i++) {
-            Sprite s=texture.sprites.get(i);int time=Math.floorMod(ticks,s.duration),frame=0;
-            for(Frame f:s.frames){if(time<f.duration){frame=f.index;break;}time-=f.duration;}
-            if(texture.last[i]!=frame){int bytes=texture.size*texture.size*4;ByteBuffer data=s.pixels.duplicate();data.position(frame*bytes).limit((frame+1)*bytes);
-                GL12.glTexSubImage3D(GL30.GL_TEXTURE_2D_ARRAY,0,0,0,i,texture.size,texture.size,1,GL11.GL_RGBA,GL11.GL_UNSIGNED_BYTE,data.slice());texture.last[i]=frame;}
+        if(texture.lastTick==ticks)return texture.sprites.size();texture.lastTick=ticks;
+        try(var unpack=new net.everla.reimaginedysm.gpu.ShaderUtil.SavedPixelUnpackState()) {
+            for(int i=0;i<texture.sprites.size();i++) {
+                Sprite s=texture.sprites.get(i);int time=Math.floorMod(ticks,s.duration),frame=0;
+                for(Frame f:s.frames){if(time<f.duration){frame=f.index;break;}time-=f.duration;}
+                if(texture.last[i]!=frame){int bytes=texture.size*texture.size*4;ByteBuffer data=s.pixels.duplicate();data.position(frame*bytes).limit((frame+1)*bytes);
+                    GL12.glTexSubImage3D(GL30.GL_TEXTURE_2D_ARRAY,0,0,0,i,texture.size,texture.size,1,GL11.GL_RGBA,GL11.GL_UNSIGNED_BYTE,data.slice());texture.last[i]=frame;}
+            }
         }
         return texture.sprites.size();
     }
@@ -68,11 +90,14 @@ public final class CosmicTextures {
                 for(int y=0;y<image.getHeight();y++)for(int x=0;x<image.getWidth();x++){int c=image.getRGB(x,y);pixels.put((byte)(c>>16)).put((byte)(c>>8)).put((byte)c).put((byte)(c>>>24));}pixels.flip();
                 result.sprites.add(new Sprite(pixels,List.copyOf(sequence),sequence.stream().mapToInt(Frame::duration).sum()));
             }
-            result.id=GL11.glGenTextures();GlStateManager._activeTexture(GL13.GL_TEXTURE0+3);GL11.glBindTexture(GL30.GL_TEXTURE_2D_ARRAY,result.id);
-            GL12.glTexImage3D(GL30.GL_TEXTURE_2D_ARRAY,0,GL11.GL_RGBA8,result.size,result.size,result.sprites.size(),0,GL11.GL_RGBA,GL11.GL_UNSIGNED_BYTE,(ByteBuffer)null);
-            GL11.glTexParameteri(GL30.GL_TEXTURE_2D_ARRAY,GL11.GL_TEXTURE_MIN_FILTER,GL11.GL_NEAREST);GL11.glTexParameteri(GL30.GL_TEXTURE_2D_ARRAY,GL11.GL_TEXTURE_MAG_FILTER,GL11.GL_NEAREST);
             result.last=new int[result.sprites.size()];Arrays.fill(result.last,-1);return result;
         }catch(Throwable e){result.close();throw e;}
     }
-    public static void clear(){CACHE.values().forEach(Texture::close);CACHE.clear();FAILED.clear();}
+    private static void upload(Texture result) {
+        result.id=GL11.glGenTextures();GlStateManager._activeTexture(GL13.GL_TEXTURE0+3);GL11.glBindTexture(GL30.GL_TEXTURE_2D_ARRAY,result.id);
+        GL12.glTexImage3D(GL30.GL_TEXTURE_2D_ARRAY,0,GL11.GL_RGBA8,result.size,result.size,result.sprites.size(),0,GL11.GL_RGBA,GL11.GL_UNSIGNED_BYTE,(ByteBuffer)null);
+        GL11.glTexParameteri(GL30.GL_TEXTURE_2D_ARRAY,GL11.GL_TEXTURE_MIN_FILTER,GL11.GL_NEAREST);GL11.glTexParameteri(GL30.GL_TEXTURE_2D_ARRAY,GL11.GL_TEXTURE_MAG_FILTER,GL11.GL_NEAREST);
+        net.everla.reimaginedysm.gpu.RenderMetrics.add("cosmicTextureAllocations",1);
+    }
+    public static synchronized void clear(){CACHE.values().forEach(CosmicTextures::release);CACHE.clear();FAILED.clear();}
 }

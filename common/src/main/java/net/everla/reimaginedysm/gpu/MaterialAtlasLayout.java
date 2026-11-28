@@ -1,5 +1,6 @@
 package net.everla.reimaginedysm.gpu;
 
+import com.mojang.blaze3d.platform.GlStateManager;
 import org.lwjgl.opengl.*;
 import org.lwjgl.system.MemoryUtil;
 import java.nio.ByteBuffer;
@@ -59,13 +60,13 @@ public final class MaterialAtlasLayout implements AutoCloseable {
         try {
             for(float value:mappings)data.putFloat(value);data.flip();
             GL15.glBindBuffer(GL31.GL_TEXTURE_BUFFER,buffer);GL15.glBufferData(GL31.GL_TEXTURE_BUFFER,data,GL15.GL_STATIC_DRAW);
-            bind();GL13.glActiveTexture(GL13.GL_TEXTURE5);GL31.glTexBuffer(GL31.GL_TEXTURE_BUFFER,GL30.GL_RGBA32F,buffer);
-        } finally {MemoryUtil.memFree(data);GL15.glBindBuffer(GL31.GL_TEXTURE_BUFFER,previous);GL13.glActiveTexture(GL13.GL_TEXTURE0);}
+            bind();GlStateManager._activeTexture(GL13.GL_TEXTURE5);GL31.glTexBuffer(GL31.GL_TEXTURE_BUFFER,GL30.GL_RGBA32F,buffer);
+        } finally {MemoryUtil.memFree(data);GL15.glBindBuffer(GL31.GL_TEXTURE_BUFFER,previous);GlStateManager._activeTexture(GL13.GL_TEXTURE0);}
     }
 
     public void bind() {
-        GL13.glActiveTexture(GL13.GL_TEXTURE5);GL11.glBindTexture(GL31.GL_TEXTURE_BUFFER,texture);
-        GL13.glActiveTexture(GL13.GL_TEXTURE0);
+        GlStateManager._activeTexture(GL13.GL_TEXTURE5);GL11.glBindTexture(GL31.GL_TEXTURE_BUFFER,texture);
+        GlStateManager._activeTexture(GL13.GL_TEXTURE0);
     }
 
     public float u(int triangle,int band,int corner,float u) {

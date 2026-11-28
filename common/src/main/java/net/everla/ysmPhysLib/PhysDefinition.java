@@ -17,6 +17,8 @@ public final class PhysDefinition {
     public final int[] ends;
     public final List<GeoBone> bones;
     public final int[] order;
+    final int[] workOrder;
+    final boolean islandView;
     public final Joint[] jointByBone;
     public final boolean[] affected;
     final boolean[] physicsScale;
@@ -24,6 +26,7 @@ public final class PhysDefinition {
     final int[] tailDepth;
 
     public PhysDefinition(GeoModel model, Consumer<String> warning) {
+        islandView=false;
         List<Joint> joints=new ArrayList<>();
         List<Cube> cubes=new ArrayList<>();
         List<GeoBone> imported = model.topLevelBones();
@@ -105,6 +108,27 @@ public final class PhysDefinition {
             for(int end:joint.outputs()) requireScale(end);
         }
         for(var cube:cubes) requireScale(cube.bone());
+        workOrder=workOrder();
+    }
+
+    /** A complete dependency island with stable original bone indices. */
+    PhysDefinition(PhysDefinition source,int group) {
+        islandView=true;
+        bones=source.bones;order=source.order;tails=source.tails;tailDepth=source.tailDepth;cubes=source.cubes;
+        int[] groups=source.islands();
+        joints=source.joints.stream().filter(j->groups[j.bone()]==group).toList();
+        ends=source.ends;
+        jointByBone=new Joint[bones.size()];for(var joint:joints)jointByBone[joint.bone()]=joint;
+        affected=new boolean[bones.size()];for(int i:order)affected[i]=groups[i]==group;
+        physicsScale=new boolean[bones.size()];
+        for(var joint:joints){requireScale(joint.bone());for(int end:joint.outputs())requireScale(end);}
+        for(var cube:cubes)requireScale(cube.bone());
+        workOrder=workOrder();
+    }
+    private int[] workOrder() {
+        boolean[] needed=physicsScale.clone();
+        for(var joint:joints){needed[joint.bone()]=true;for(int end:joint.outputs())needed[end]=true;}
+        return java.util.Arrays.stream(order).filter(i->needed[i]).toArray();
     }
 
     private void requireScale(int bone) {

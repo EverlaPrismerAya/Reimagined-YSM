@@ -65,6 +65,7 @@ import java.security.SecureRandom;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
@@ -87,7 +88,8 @@ public final class ServerModelManager {
     /**
      * 生成缓存文件的文件夹
      */
-    private static final Map<String, ModelCatalogMetadata> catalogMetadata = new ConcurrentHashMap<>();
+    private static volatile Map<String, ModelCatalogMetadata> catalogMetadata = new ConcurrentHashMap<>();
+    private static Map<String, ModelCatalogMetadata> buildingCatalogMetadata = new ConcurrentHashMap<>();
 
     public static final Path CACHE = FOLDER.resolve("cache");
     public static final Path CACHE_SERVER_INDEX_FILE = CACHE.resolve("server_index");
@@ -111,10 +113,12 @@ public final class ServerModelManager {
     private static Set<String> AUTH_MODELS = Sets.newHashSet();
 
     private static final Map<UUID, PlayerSyncState> syncStates = new ConcurrentHashMap<>();
-    private static final Map<String, ServerPackData> packs = new ConcurrentHashMap<>();
+    private static volatile Map<String, ServerPackData> packs = new ConcurrentHashMap<>();
+    private static Map<String, ServerPackData> buildingPacks = new ConcurrentHashMap<>();
     private static final SecureRandom theRandom = new SecureRandom();
     public static byte[] serverKey;
     private static volatile boolean initialized = false;
+    private static final AtomicBoolean modelLoadInProgress = new AtomicBoolean();
     private static boolean modelDirectoriesPrepared = false;
     private static volatile String loadedSourceState;
     private static final Gson GSON = new Gson();
@@ -489,7 +493,10 @@ public final class ServerModelManager {
                 throw new IllegalStateException("Failed to prepare YSM model directories", e);
             }
         }
-        catalogMetadata.clear();
+        Map<String, ModelCatalogMetadata> preparedMetadata = new ConcurrentHashMap<>();
+        Map<String, ServerPackData> preparedPacks = new ConcurrentHashMap<>();
+        buildingCatalogMetadata = preparedMetadata;
+        buildingPacks = preparedPacks;
         long begin = System.currentTimeMillis();
         ForkJoinPool pool = createLoadPool();
         try {
@@ -501,20 +508,20 @@ public final class ServerModelManager {
             Map<String, CachedModelMetadata> nextCatalogModels = new ConcurrentHashMap<>();
             ConcurrentMap<String, SourceSnapshot> snapshots = new ConcurrentHashMap<>();
 
-            packs.clear();
 
+            MessageDigest sourceState = newSha256();
             pool.submit(() -> {
-                scanSource(BUILT, CACHE_SERVER, loadedModels, authIds, validCacheFiles, false, previousCatalog, nextCatalogModels, snapshots);
-                scanSource(CUSTOM, CACHE_SERVER, loadedModels, authIds, validCacheFiles, false, previousCatalog, nextCatalogModels, snapshots);
-                scanSource(AUTH, CACHE_SERVER, loadedModels, authIds, validCacheFiles, true, previousCatalog, nextCatalogModels, snapshots);
+                scanSource(BUILT, CACHE_SERVER, loadedModels, authIds, validCacheFiles, false, previousCatalog, nextCatalogModels, snapshots, sourceState);
+                scanSource(CUSTOM, CACHE_SERVER, loadedModels, authIds, validCacheFiles, false, previousCatalog, nextCatalogModels, snapshots, sourceState);
+                scanSource(AUTH, CACHE_SERVER, loadedModels, authIds, validCacheFiles, true, previousCatalog, nextCatalogModels, snapshots, sourceState);
             }).get();
 
             nextCatalog.models.putAll(nextCatalogModels);
-            loadedSourceState = computeModelSourceState();
+            String preparedSourceState = HexFormat.of().formatHex(sourceState.digest());
 
             Map<String, ServerModelData> orderedModels = new LinkedHashMap<>();
             loadedModels.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry -> orderedModels.put(entry.getKey(), entry.getValue()));
-            catalogMetadata.keySet().retainAll(orderedModels.keySet());
+            preparedMetadata.keySet().retainAll(orderedModels.keySet());
 
             try {
                 writeCatalog(nextCatalog);
@@ -532,9 +539,8 @@ public final class ServerModelManager {
 
             YesSteveModel.LOGGER.info("[YSM] Loaded {} models in {}ms", orderedModels.size(), System.currentTimeMillis() - begin);
             ModelLoadResult result = new ModelLoadResult(true, null, orderedModels, authIds.toArray(new String[0]));
-            AUTH_MODELS = new HashSet<>(authIds);
 
-            onModelLoadComplete(result, callback);
+            onModelLoadComplete(result, callback, preparedMetadata, preparedPacks, preparedSourceState);
             return true;
         } catch (Exception e) {
             YesSteveModel.LOGGER.error("[YSM] Model loading failed", e);
@@ -564,25 +570,14 @@ public final class ServerModelManager {
         }, null, true);
     }
 
-    private static void scanSource(Path baseDir, Path cacheDir, Map<String, ServerModelData> loaded, Set<String> authIds, Set<String> validCaches, boolean isAuth, CatalogFile previousCatalog, Map<String, CachedModelMetadata> nextCatalog, ConcurrentMap<String, SourceSnapshot> snapshots) {
+    private static void scanSource(Path baseDir, Path cacheDir, Map<String, ServerModelData> loaded, Set<String> authIds, Set<String> validCaches, boolean isAuth, CatalogFile previousCatalog, Map<String, CachedModelMetadata> nextCatalog, ConcurrentMap<String, SourceSnapshot> snapshots, MessageDigest sourceState) {
         if (baseDir == null || !Files.isDirectory(baseDir)) return;
-
-        scanDirectoryPacks(baseDir, "");
         String sourceGroup = baseDir.getFileName().toString();
-        scanDirectoryModels(baseDir, "", cacheDir, loaded, authIds, validCaches, isAuth, previousCatalog, nextCatalog, snapshots, sourceGroup, null);
-
         List<Path> zipFiles = new ArrayList<>();
-        try (Stream<Path> stream = Files.walk(baseDir, FileVisitOption.FOLLOW_LINKS)) {
-            stream.filter(Files::isRegularFile)
-                    .filter(p -> p.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".zip"))
-                    .forEach(zipFiles::add);
-        } catch (FileSystemLoopException e) {
-            YesSteveModel.LOGGER.warn("Symlink loop while scanning zips in: " + baseDir, e);
-        } catch (IOException e) {
-            YesSteveModel.LOGGER.error("Failed to collect zip files from: " + baseDir, e);
-            return;
-        }
-
+        Map<String, BasicFileAttributes> fileStates = new TreeMap<>();
+        scanDirectoryModels(baseDir, "", cacheDir, loaded, authIds, validCaches, isAuth, previousCatalog, nextCatalog, snapshots, sourceGroup, null, zipFiles, fileStates);
+        String stateGroup = baseDir.equals(BUILT) ? "built" : sourceGroup;
+        fileStates.forEach((relative, attrs) -> updateSourceState(stateGroup + '/' + relative.replace('\\', '/'), attrs.size(), attrs.lastModifiedTime().toMillis(), sourceState));
         zipFiles.parallelStream().forEach(zipFile -> processZip(zipFile, baseDir, cacheDir, loaded, authIds, validCaches, isAuth, previousCatalog, nextCatalog, snapshots, sourceGroup));
     }
 
@@ -614,8 +609,7 @@ public final class ServerModelManager {
                         }
                     }
                 } else {
-                    scanDirectoryPacks(root, prefix);
-                    scanDirectoryModels(root, prefix, cacheDir, loaded, authIds, validCaches, isAuth, previousCatalog, nextCatalog, snapshots, sourceGroup, zipFile);
+                    scanDirectoryModels(root, prefix, cacheDir, loaded, authIds, validCaches, isAuth, previousCatalog, nextCatalog, snapshots, sourceGroup, zipFile, null, null);
                 }
             }
         } catch (Exception e) {
@@ -624,7 +618,7 @@ public final class ServerModelManager {
         }
     }
 
-    private static void scanDirectoryModels(Path searchRoot, String prefix, Path cacheDir, Map<String, ServerModelData> loaded, Set<String> authIds, Set<String> validCaches, boolean isAuth, CatalogFile previousCatalog, Map<String, CachedModelMetadata> nextCatalog, ConcurrentMap<String, SourceSnapshot> snapshots, String sourceGroup, @Nullable Path sourceOverride) {
+    private static void scanDirectoryModels(Path searchRoot, String prefix, Path cacheDir, Map<String, ServerModelData> loaded, Set<String> authIds, Set<String> validCaches, boolean isAuth, CatalogFile previousCatalog, Map<String, CachedModelMetadata> nextCatalog, ConcurrentMap<String, SourceSnapshot> snapshots, String sourceGroup, @Nullable Path sourceOverride, @Nullable List<Path> zipFiles, @Nullable Map<String, BasicFileAttributes> fileStates) {
         if (searchRoot == null || !Files.isDirectory(searchRoot)) return;
 
         List<Path> modelFolders = new ArrayList<>();
@@ -632,13 +626,16 @@ public final class ServerModelManager {
 
         try {
             Files.walkFileTree(searchRoot, EnumSet.of(FileVisitOption.FOLLOW_LINKS), Integer.MAX_VALUE, new SimpleFileVisitor<>() {
+                private Path modelRoot;
+
                 @Override
                 public @NotNull FileVisitResult preVisitDirectory(@NotNull Path dir, @NotNull BasicFileAttributes attrs) {
                     if (dir.equals(searchRoot)) return FileVisitResult.CONTINUE;
+                    if (dir.getParent().equals(searchRoot)) readDirectoryPack(searchRoot, dir, prefix);
                     try {
-                        if (YSMFolderDeserializer.isModelFolder(dir)) {
+                        if (modelRoot == null && YSMFolderDeserializer.isModelFolder(dir)) {
                             modelFolders.add(dir);
-                            return FileVisitResult.SKIP_SUBTREE;
+                            modelRoot = dir;
                         }
                     } catch (Exception e) {
                         YesSteveModel.LOGGER.error("Error checking directory: " + dir, e);
@@ -648,7 +645,19 @@ public final class ServerModelManager {
 
                 @Override
                 public @NotNull FileVisitResult visitFile(@NotNull Path file, @NotNull BasicFileAttributes attrs) {
-                    if (file.getFileName().toString().endsWith(".ysm")) ysmFiles.add(file);
+                    if (attrs.isRegularFile()) {
+                        if (fileStates != null) fileStates.put(searchRoot.relativize(file).toString(), attrs);
+                        String name = file.getFileName().toString();
+                        if (modelRoot == null && name.endsWith(".ysm")) ysmFiles.add(file);
+                        if (zipFiles != null && name.toLowerCase(Locale.ROOT).endsWith(".zip")) zipFiles.add(file);
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public @NotNull FileVisitResult postVisitDirectory(Path dir, IOException failure) throws IOException {
+                    if (dir.equals(modelRoot)) modelRoot = null;
+                    if (failure != null) throw failure;
                     return FileVisitResult.CONTINUE;
                 }
 
@@ -889,7 +898,7 @@ public final class ServerModelManager {
             ServerAnimationInfo animations = new ServerAnimationInfo(cached.animations != null ? cached.animations : Collections.emptyMap(), cached.textures != null ? cached.textures : new String[0]);
             Object[] projectiles = cached.projectiles != null ? cached.projectiles : new String[0][];
             Object[] vehicles = cached.vehicles != null ? cached.vehicles : new String[0][];
-            catalogMetadata.put(modelId, cached);
+            buildingCatalogMetadata.put(modelId, cached);
             validCaches.add(cacheFileName);
             return new ServerModelData(modelId, animations, projectiles, vehicles, info, cached.customSkinModel, isAuth);
         } catch (Exception e) {
@@ -915,7 +924,7 @@ public final class ServerModelManager {
         try {
             CachedModelMetadata metadata = createCachedMetadata(modelId, raw, source, cacheDir, isAuth);
             nextCatalog.put(key, metadata);
-            catalogMetadata.put(modelId, metadata);
+            buildingCatalogMetadata.put(modelId, metadata);
         } catch (IOException e) {
             YesSteveModel.LOGGER.warn("Failed to cache model metadata: " + modelId, e);
         }
@@ -1007,54 +1016,46 @@ public final class ServerModelManager {
         return copy;
     }
 
-    private static void scanDirectoryPacks(Path searchRoot, String prefix) {
-        if (searchRoot == null || !Files.isDirectory(searchRoot)) return;
-        try (var stream = Files.walk(searchRoot, 1, FileVisitOption.FOLLOW_LINKS)) {
-            stream.filter(Files::isDirectory).forEach(path -> {
-                if (path.equals(searchRoot)) return;
-                Path packJson = path.resolve("ysm-pack.json");
-                if (Files.exists(packJson)) {
-                    try {
-                        ServerPackData packData = new ServerPackData();
-                        String rel = searchRoot.relativize(path).toString().replace('\\', '/');
-                        packData.folderPath = prefix + rel + (rel.endsWith("/") ? "" : "/");
+    private static void readDirectoryPack(Path searchRoot, Path path, String prefix) {
+        Path packJson = path.resolve("ysm-pack.json");
+        if (Files.exists(packJson)) {
+            try {
+                ServerPackData packData = new ServerPackData();
+                String rel = searchRoot.relativize(path).toString().replace('\\', '/');
+                packData.folderPath = prefix + rel + (rel.endsWith("/") ? "" : "/");
 
-                        String jsonStr = Files.readString(packJson, StandardCharsets.UTF_8);
-                        JsonObject json = JsonParser.parseString(jsonStr).getAsJsonObject();
-                        if (json.has("name")) packData.name = json.get("name").getAsString();
-                        if (json.has("description")) packData.description = json.get("description").getAsString();
+                String jsonStr = Files.readString(packJson, StandardCharsets.UTF_8);
+                JsonObject json = JsonParser.parseString(jsonStr).getAsJsonObject();
+                if (json.has("name")) packData.name = json.get("name").getAsString();
+                if (json.has("description")) packData.description = json.get("description").getAsString();
 
-                        if (json.has("lang") && json.get("lang").isJsonObject()) {
-                            packData.lang = new HashMap<>();
-                            JsonObject langObj = json.getAsJsonObject("lang");
-                            for (Map.Entry<String, JsonElement> entry : langObj.entrySet()) {
-                                if (entry.getValue().isJsonObject()) {
-                                    Map<String, String> translations = new HashMap<>();
-                                    for (Map.Entry<String, JsonElement> transEntry : entry.getValue().getAsJsonObject().entrySet()) {
-                                        translations.put(transEntry.getKey(), transEntry.getValue().getAsString());
-                                    }
-                                    packData.lang.put(entry.getKey(), translations);
-                                }
+                if (json.has("lang") && json.get("lang").isJsonObject()) {
+                    packData.lang = new HashMap<>();
+                    JsonObject langObj = json.getAsJsonObject("lang");
+                    for (Map.Entry<String, JsonElement> entry : langObj.entrySet()) {
+                        if (entry.getValue().isJsonObject()) {
+                            Map<String, String> translations = new HashMap<>();
+                            for (Map.Entry<String, JsonElement> transEntry : entry.getValue().getAsJsonObject().entrySet()) {
+                                translations.put(transEntry.getKey(), transEntry.getValue().getAsString());
                             }
+                            packData.lang.put(entry.getKey(), translations);
                         }
-
-                        Path packPng = path.resolve("ysm-pack.png");
-                        if (Files.exists(packPng)) {
-                            byte[] data = Files.readAllBytes(packPng);
-                            int[] dims = getPngDimensions(data);
-                            packData.iconData = data;
-                            packData.iconWidth = dims[0];
-                            packData.iconHeight = dims[1];
-                            packData.iconFormat = 2; // 2=PNG
-                        }
-                        packs.put(packData.folderPath, packData);
-                    } catch (Exception e) {
-                        YesSteveModel.LOGGER.error("Failed to load pack metadata: " + packJson, e);
                     }
                 }
-            });
-        } catch (Exception e) {
-            YesSteveModel.LOGGER.error("Failed to walk directory for packs: " + searchRoot, e);
+
+                Path packPng = path.resolve("ysm-pack.png");
+                if (Files.exists(packPng)) {
+                    byte[] data = Files.readAllBytes(packPng);
+                    int[] dims = getPngDimensions(data);
+                    packData.iconData = data;
+                    packData.iconWidth = dims[0];
+                    packData.iconHeight = dims[1];
+                    packData.iconFormat = 2; // 2=PNG
+                }
+                buildingPacks.put(packData.folderPath, packData);
+            } catch (Exception e) {
+                YesSteveModel.LOGGER.error("Failed to load pack metadata: " + packJson, e);
+            }
         }
     }
 
@@ -1538,14 +1539,18 @@ public final class ServerModelManager {
         try (Stream<Path> stream = Files.walk(root, FileVisitOption.FOLLOW_LINKS)) {
             for (Path file : stream.filter(Files::isRegularFile).sorted(Comparator.comparing(path -> root.relativize(path).toString())).toList()) {
                 String relative = group + '/' + root.relativize(file).toString().replace('\\', '/');
-                digest.update(relative.getBytes(StandardCharsets.UTF_8));
-                digest.update((byte) 0);
-                digest.update(Long.toString(Files.size(file)).getBytes(StandardCharsets.US_ASCII));
-                digest.update((byte) 0);
-                digest.update(Long.toString(Files.getLastModifiedTime(file).toMillis()).getBytes(StandardCharsets.US_ASCII));
-                digest.update((byte) 0);
+                updateSourceState(relative, Files.size(file), Files.getLastModifiedTime(file).toMillis(), digest);
             }
         }
+    }
+
+    private static void updateSourceState(String relative, long size, long modified, MessageDigest digest) {
+        digest.update(relative.getBytes(StandardCharsets.UTF_8));
+        digest.update((byte) 0);
+        digest.update(Long.toString(size).getBytes(StandardCharsets.US_ASCII));
+        digest.update((byte) 0);
+        digest.update(Long.toString(modified).getBytes(StandardCharsets.US_ASCII));
+        digest.update((byte) 0);
     }
 
     public static void requestPlayerAuth(ServerPlayer serverPlayer, @Nullable Consumer<UUIDComponentData> consumer) {
@@ -1564,12 +1569,13 @@ public final class ServerModelManager {
     }
 
     public static boolean loadModels(@Nullable Consumer<ModelLoadResult> consumer, @Nullable Consumer<UUIDComponentData> consumer2) {
+        if (!modelLoadInProgress.compareAndSet(false, true)) return false;
         Consumer<ModelLoadResult> action = modelLoadResult -> {
             if (consumer != null) {
                 consumer.accept(modelLoadResult);
             }
             MinecraftServer currentServer = GameInstance.getServer();
-            if (currentServer == null) {
+            if (!modelLoadResult.isSuccess() || currentServer == null) {
                 return;
             }
             currentServer.execute(() -> {
@@ -1580,26 +1586,48 @@ public final class ServerModelManager {
                 nativeSyncModels(players.stream().filter(NetworkHandler::isPlayerConnected).map((player) -> player.getUUID()).toArray(i -> new UUID[i]), players.stream().filter(NetworkHandler::isPlayerConnected).map(serverPlayer -> serverPlayer.getGameProfile().getName()).toArray(i2 -> new String[i2]), collectPlayerModelIds(players), consumer2);
             });
         };
-        return nativeLoadModels(action);
+        MinecraftServer currentServer = GameInstance.getServer();
+        if (initialized && currentServer != null && currentServer.isSameThread()) {
+            YSMThreadPool.submit(() -> {
+                try {
+                    if (!nativeLoadModels(action)) action.accept(new ModelLoadResult(false,
+                            Component.literal("YSM model reload failed; see log"), Map.of(), new String[0]));
+                } catch (Exception failure) {
+                    YesSteveModel.LOGGER.error("Failed to reload YSM models", failure);
+                    action.accept(new ModelLoadResult(false, Component.literal("YSM model reload failed; see log"), Map.of(), new String[0]));
+                } finally {
+                    modelLoadInProgress.set(false);
+                }
+            });
+            return true;
+        }
+        try {
+            return nativeLoadModels(action);
+        } finally {
+            modelLoadInProgress.set(false);
+        }
     }
 
     private static String[] collectPlayerModelIds(Collection<ServerPlayer> collection) {
         return collection.stream().filter(NetworkHandler::isPlayerConnected).map(serverPlayer -> ModelInfoCapability.get(serverPlayer).map(ModelInfoCapability::getModelId)).filter(Optional::isPresent).map(Optional::get).distinct().toArray(String[]::new);
     }
 
-    private static void onModelLoadComplete(ModelLoadResult modelLoadResult, @Nullable Object obj) {
+    private static void onModelLoadComplete(ModelLoadResult modelLoadResult, @Nullable Object obj, Map<String, ModelCatalogMetadata> metadata, Map<String, ServerPackData> modelPacks, String sourceState) {
         Consumer<ModelLoadResult> consumer = (Consumer<ModelLoadResult>) obj;
         MinecraftServer currentServer = GameInstance.getServer();
+        IntOpenHashSet hashes = new IntOpenHashSet(modelLoadResult.getModelDefinitions().size());
         if (modelLoadResult.isSuccess()) {
-            IntOpenHashSet hashes = new IntOpenHashSet(modelLoadResult.getModelDefinitions().size());
             for (ServerModelData data : modelLoadResult.getModelDefinitions().values()) {
                 hashes.add(data.getLoadedModelData().getHashId());
             }
-            modelHashSet = hashes;
         }
         if (currentServer != null) {
             currentServer.execute(() -> {
                 if (modelLoadResult.isSuccess()) {
+                    catalogMetadata = metadata;
+                    packs = modelPacks;
+                    loadedSourceState = sourceState;
+                    modelHashSet = hashes;
                     CACHE_NAME_INFO = modelLoadResult.getModelDefinitions();
                     AUTH_MODELS = modelLoadResult.getAuthModelIds();
                 }
@@ -1611,6 +1639,10 @@ public final class ServerModelManager {
             return;
         }
         if (modelLoadResult.isSuccess()) {
+            catalogMetadata = metadata;
+            packs = modelPacks;
+            loadedSourceState = sourceState;
+            modelHashSet = hashes;
             CACHE_NAME_INFO = modelLoadResult.getModelDefinitions();
             AUTH_MODELS = modelLoadResult.getAuthModelIds();
         }

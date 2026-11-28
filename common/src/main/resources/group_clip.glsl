@@ -4,7 +4,8 @@ in vec3 normal;
 flat in uint surfaceCube;
 struct SurfaceSolid {vec4 planes[6];vec4 lo;vec4 hi;ivec4 meta;};
 layout(std430,binding=4) readonly buffer SurfaceBlock {SurfaceSolid solids[];};
-layout(std430,binding=5) readonly buffer SurfaceNeighbors {uint neighbors[];};
+struct SurfaceBvhNode {vec4 lo;vec4 hi;ivec4 links;ivec4 info;};
+layout(std430,binding=5) readonly buffer SurfaceNeighbors {SurfaceBvhNode surfaceTree[];};
 uniform bool surfaceClipping;
 uniform int solidCount;
 uniform bool silhouetteMaskEnabled, silhouetteAtlas;
@@ -20,20 +21,21 @@ bool rysmOutlineMasked() {
 }
 bool rysmInterior() {
     if(!surfaceClipping)return false;
-    uint words=(uint(solidCount)+31u)/32u;
-    for(uint word=0u;word<words;word++) {
-        uint bits=neighbors[surfaceCube*words+word];
-        while(bits!=0u) {
-            uint other=word*32u+uint(findLSB(bits));bits&=bits-1u;
-            SurfaceSolid s=solids[other];bool inside=true;
-            for(int i=0;i<6;i++) {
-                vec4 plane=s.planes[i];
-                // Keep exactly one copy of coincident exterior faces.
-                float epsilon=dot(plane.xyz,normalize(normal))>.999 && other>surfaceCube?-1e-6:1e-6;
-                if(dot(plane.xyz,position)-plane.w>epsilon){inside=false;break;}
-            }
-            if(inside)return true;
+    int node=floatBitsToInt(solids[surfaceCube].lo.w);int end=surfaceTree[node].links.z;
+    while(node<end) {
+        SurfaceBvhNode n=surfaceTree[node];
+        if(any(lessThan(position,n.lo.xyz-vec3(1e-6))) || any(greaterThan(position,n.hi.xyz+vec3(1e-6)))) {node=n.links.z;continue;}
+        int other=n.links.w;
+        if(other<0){node=n.links.x;continue;}
+        node=n.links.z;
+        if(other==int(surfaceCube))continue;
+        SurfaceSolid s=solids[other];bool inside=true;
+        for(int i=0;i<6;i++) {
+            vec4 plane=s.planes[i];
+            float epsilon=dot(plane.xyz,normalize(normal))>.999 && uint(other)>surfaceCube?-1e-6:1e-6;
+            if(dot(plane.xyz,position)-plane.w>epsilon){inside=false;break;}
         }
+        if(inside)return true;
     }
     return false;
 }

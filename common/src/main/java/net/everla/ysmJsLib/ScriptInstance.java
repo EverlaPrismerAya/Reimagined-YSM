@@ -13,14 +13,20 @@ import org.mozilla.javascript.*;
 import java.util.*;
 
 public final class ScriptInstance {
+    private static final java.util.regex.Pattern QUERY=java.util.regex.Pattern.compile("[A-Za-z_][A-Za-z0-9_.]*(?:\\([^;{}]*\\))?");
+    private static final java.util.regex.Pattern NAMESPACE=java.util.regex.Pattern.compile("(?:q|query|math|v|variable|c|context|rysmjs)\\..*");
+    private static final java.util.regex.Pattern MUTATING=java.util.regex.Pattern.compile("(?s).*(?:[=;{}]|\\+\\+|--|\\b(?:fn|ctrl|loop|for_each)\\b).*");
     public final ScriptRuntime runtime;
     private final AnimatedGeoModel model;
     private long tick=Long.MIN_VALUE;
     private long printTick=Long.MIN_VALUE;
     private int printed;
     private IContext<?> lastContext;
+    private ScriptableObject tickContext,poseContext;
     private final Map<String,Double> synchronizedValues=new LinkedHashMap<>();
-    private final Map<IBone,float[]> saved=new IdentityHashMap<>();
+    private final PoseCache poses=new PoseCache();
+    private boolean interpolatePose;
+    private final Map<String,ScriptableObject> groupObjects=new HashMap<>();
     private final Map<String,com.elfmcys.yesstevemodel.geckolib3.core.molang.value.IValue> expressions=new HashMap<>();
     public ScriptInstance(AnimatedGeoModel model) {this.model=model;runtime=new ScriptRuntime(model.getGeoModel().scripts.bundle);}
     public static ScriptInstance get(AnimatedGeoModel model) {
@@ -31,9 +37,7 @@ public final class ScriptInstance {
     }
     public static void restore(AnimatedGeoModel model) {
         if(model==null||model.rysmScript==null)return;
-        var instance=model.rysmScript;
-        instance.saved.forEach((b,v)->{b.setPositionX(v[0]);b.setPositionY(v[1]);b.setPositionZ(v[2]);b.setRotationX(v[3]);b.setRotationY(v[4]);b.setRotationZ(v[5]);b.setScaleX(v[6]);b.setScaleY(v[7]);b.setScaleZ(v[8]);});
-        instance.saved.clear();
+        model.rysmScript.poses.restore();
     }
     public double value(String name) {
         return lastContext==null?0:evaluate(name,new Object[0],lastContext);
@@ -41,7 +45,7 @@ public final class ScriptInstance {
     public double evaluate(String name,Object[] args,IContext<?> ctx) {
         var declaration=runtime.molang.get(name);
         if(declaration==null)return 0;
-        if(!declaration.sync())return runtime.evaluate(name,args,cx->context(ctx,false));
+        if(!declaration.sync())return runtime.evaluateQuery(name,args,ctx.entity()==Minecraft.getInstance().player,cx->context(ctx,false));
         if(args.length!=0)return declaration.fallback();
         var mc=Minecraft.getInstance();
         if(ctx.entity()!=mc.player) {
@@ -63,7 +67,8 @@ public final class ScriptInstance {
     public static void begin(IContext<?> context) {
         var i=get(context.geoInstance().getCurrentModel());if(i==null)return;i.lastContext=context;
         if(i.tick!=ScriptInput.tick){
-            i.tick=ScriptInput.tick;i.synchronizedValues.clear();i.runtime.callbacks(false,cx->i.context(context,false));
+            i.tick=ScriptInput.tick;i.synchronizedValues.clear();
+            i.runtime.tick(context.entity()==Minecraft.getInstance().player,cx->i.context(context,false));
             if(context.entity()==Minecraft.getInstance().player && context.geoInstance() instanceof com.elfmcys.yesstevemodel.capability.PlayerCapability cap && cap.getModelAssembly()!=null) {
                 i.runtime.molang.forEach((name,entry)->{if(entry.sync())i.evaluate(name,new Object[0],context);});
                 if(!i.synchronizedValues.isEmpty())ScriptSync.Client.send(cap.getModelId(),cap.getModelAssembly().getModelData().getModelHash(),i.runtime.bundle.digest,i.synchronizedValues);
@@ -73,64 +78,64 @@ public final class ScriptInstance {
     public static void animate(IContext<?> context) {
         var i=get(context.geoInstance().getCurrentModel());if(i==null)return;
         begin(context);
-        i.runtime.callbacks(true,cx->i.context(context,true));
+        Object world=context.entity() instanceof Entity e?e.level():null;
+        if(i.poses.sample(ScriptInput.tick,world)) {
+            i.runtime.poses(cx->i.context(context,true),interpolate->i.interpolatePose=interpolate);i.poses.finish();
+            net.everla.reimaginedysm.gpu.RenderMetrics.add("poseSamples",1);
+        }
+        i.poses.apply(context.animationEvent().getFrameTime());
+    }
+    private Entity entity(){return lastContext!=null&&lastContext.entity() instanceof Entity e?e:null;}
+    private boolean local(){return entity()!=null&&entity()==Minecraft.getInstance().player;}
+    private ScriptableObject vector(java.util.function.Supplier<net.minecraft.world.phys.Vec3> supplier) {
+        var object=runtime.object(Context.getCurrentContext());
+        runtime.readonly(object,"x",()->supplier.get().x);runtime.readonly(object,"y",()->supplier.get().y);runtime.readonly(object,"z",()->supplier.get().z);object.sealObject();return object;
     }
     public Scriptable context(IContext<?> ctx,boolean pose) {
-        var mc=Minecraft.getInstance();Entity e=ctx.entity() instanceof Entity entity?entity:null;
-        boolean local=e!=null&&e==mc.player;
-        var entity=new HashMap<String,Object>();
-        entity.put("health",e instanceof LivingEntity living?(double)living.getHealth():0.0);
-        entity.put("maxHealth",e instanceof LivingEntity living?(double)living.getMaxHealth():0.0);
-        entity.put("position",Map.of("x",e==null?0:e.getX(),"y",e==null?0:e.getY(),"z",e==null?0:e.getZ()));
-        var velocity=e==null?net.minecraft.world.phys.Vec3.ZERO:e.getDeltaMovement();
-        entity.put("velocity",Map.of("x",velocity.x,"y",velocity.y,"z",velocity.z));
-        entity.put("pose",e==null?"preview":e.getPose().name().toLowerCase(Locale.ROOT));
-        entity.put("yaw",e==null?0:e.getYRot());entity.put("pitch",e==null?0:e.getXRot());entity.put("local",local);
+        lastContext=ctx;
+        ScriptableObject cached=pose?poseContext:tickContext;if(cached!=null)return cached;
+        var mc=Minecraft.getInstance();
+        var entity=runtime.object(Context.getCurrentContext());
+        runtime.readonly(entity,"health",()->entity() instanceof LivingEntity living?(double)living.getHealth():0.0);
+        runtime.readonly(entity,"maxHealth",()->entity() instanceof LivingEntity living?(double)living.getMaxHealth():0.0);
+        ScriptableObject.defineProperty(entity,"position",vector(()->entity()==null?net.minecraft.world.phys.Vec3.ZERO:entity().position()),ScriptableObject.READONLY|ScriptableObject.PERMANENT);
+        ScriptableObject.defineProperty(entity,"velocity",vector(()->entity()==null?net.minecraft.world.phys.Vec3.ZERO:entity().getDeltaMovement()),ScriptableObject.READONLY|ScriptableObject.PERMANENT);
+        runtime.readonly(entity,"pose",()->entity()==null?"preview":entity().getPose().name().toLowerCase(Locale.ROOT));
+        runtime.readonly(entity,"yaw",()->entity()==null?0:entity().getYRot());runtime.readonly(entity,"pitch",()->entity()==null?0:entity().getXRot());runtime.readonly(entity,"local",this::local);
+        ScriptAttributes.bindLive(runtime,entity,()->entity() instanceof LivingEntity living?living:null);entity.sealObject();
         var input=runtime.object(Context.getCurrentContext());
-        runtime.define(input,"key",args->runtime.snapshot(ScriptInput.get(Context.toString(args[0]),false,local).values()));
-        runtime.define(input,"binding",args->runtime.snapshot(ScriptInput.get(Context.toString(args[0]),true,local).values()));runtime.define(input,"bindings",args->{
-            String filter=args.length==0?"":Context.toString(args[0]);
-            Object[] bindings=ScriptKeyLogger.bindings(filter).stream().map(runtime::snapshot).toArray();
-            return Context.getCurrentContext().newArray(input,bindings);
-        });input.sealObject();
-        double ticks=e==null?ScriptInput.tick:e.tickCount;ticks+=ctx.animationEvent().getFrameTime();
-        var camera=mc.gameRenderer.getMainCamera();
-        var out=runtime.game(message->{
-            if(local) {
-                if(printTick!=ScriptInput.tick){printTick=ScriptInput.tick;printed=0;}
-                if(printed++<16)mc.gui.getChat().addMessage(net.minecraft.network.chat.Component.literal(message));
-            }
-        });
-        ScriptableObject.putProperty(out,"entity",runtime.snapshot(entity,view->ScriptAttributes.bind(runtime,view,e instanceof LivingEntity living?living:null)));ScriptableObject.putProperty(out,"input",input);
-        ScriptableObject.putProperty(out,"time",runtime.snapshot(Map.of("ticks",ticks,"seconds",ticks/20)));
-        ScriptableObject.putProperty(out,"camera",runtime.snapshot(Map.of("yaw",camera.getYRot(),"pitch",camera.getXRot())));
+        runtime.define(input,"key",args->runtime.snapshot(ScriptInput.get(Context.toString(args[0]),false,local()).values()));
+        runtime.define(input,"binding",args->runtime.snapshot(ScriptInput.get(Context.toString(args[0]),true,local()).values()));
+        runtime.define(input,"bindings",args->{String filter=args.length==0?"":Context.toString(args[0]);Object[] bindings=ScriptKeyLogger.bindings(filter).stream().map(runtime::snapshot).toArray();return Context.getCurrentContext().newArray(input,bindings);});input.sealObject();
+        var time=runtime.object(Context.getCurrentContext());
+        java.util.function.Supplier<Object> ticks=()->(entity()==null?(double)ScriptInput.tick:(double)entity().tickCount)+(pose?0:lastContext.animationEvent().getFrameTime());
+        runtime.readonly(time,"ticks",ticks);runtime.readonly(time,"seconds",()->((Number)ticks.get()).doubleValue()/20);time.sealObject();
+        var camera=runtime.object(Context.getCurrentContext());runtime.readonly(camera,"yaw",()->mc.gameRenderer.getMainCamera().getYRot());runtime.readonly(camera,"pitch",()->mc.gameRenderer.getMainCamera().getXRot());camera.sealObject();
+        var out=runtime.game(message->{if(local()){if(printTick!=ScriptInput.tick){printTick=ScriptInput.tick;printed=0;}if(printed++<16)mc.gui.getChat().addMessage(net.minecraft.network.chat.Component.literal(message));}});
+        ScriptableObject.putProperty(out,"entity",entity);ScriptableObject.putProperty(out,"input",input);ScriptableObject.putProperty(out,"time",time);ScriptableObject.putProperty(out,"camera",camera);
         runtime.define(out,"molang",args->{
             if(args.length!=1)throw new IllegalArgumentException("molang expects one query string");
-            String text=Context.toString(args[0]);if(text.length()>4096||expressions.size()>256)throw new IllegalArgumentException("Molang bridge limit");
-            if(!text.matches("[A-Za-z_][A-Za-z0-9_.]*(?:\\([^;{}]*\\))?"))throw new IllegalArgumentException("Only read-only Molang queries are permitted");
-            if(!text.matches("(?:q|query|math|v|variable|c|context|rysmjs)\\..*") || text.matches("(?s).*(?:[=;{}]|\\+\\+|--|\\b(?:fn|ctrl|loop|for_each)\\b).*"))throw new IllegalArgumentException("Mutating Molang namespaces are unavailable");
-            var value=expressions.computeIfAbsent(text,s->GeckoLibCache.getMolangParser().parseExpression(s,false));
-            return (double)value.evalAsFloat(ExpressionEvaluator.evaluator(ctx));
+            String text=Context.toString(args[0]);if(text.length()>4096)throw new IllegalArgumentException("Molang bridge limit");
+            var value=expressions.computeIfAbsent(text,s->{
+                if(expressions.size()>=256)throw new IllegalArgumentException("Molang bridge limit");
+                if(!QUERY.matcher(s).matches() || !NAMESPACE.matcher(s).matches() || MUTATING.matcher(s).matches())throw new IllegalArgumentException("Only read-only Molang queries are permitted");
+                return GeckoLibCache.getMolangParser().parseExpression(s,false);
+            });return (double)value.evalAsFloat(ExpressionEvaluator.evaluator(lastContext));
         });
         runtime.define(out,"group",args->{
             if(!pose)throw new IllegalArgumentException("Group transforms are only available in Rysm.model('pose', callback)");
             if(args.length!=1)throw new IllegalArgumentException("Expected one qualified group name");
-            String target=Context.toString(args[0]),localName=model.getGeoModel().scripts.localGroupName(target);
-            IBone bone=localName==null?null:model.bones().get(StringPool.computeIfAbsent(localName));
+            String target=Context.toString(args[0]);if(target.length()>256)throw new IllegalArgumentException("Group name too long");
+            var existing=groupObjects.get(target);if(existing!=null)return existing;
+            String localName=model.getGeoModel().scripts.localGroupName(target);IBone bone=localName==null?null:model.bones().get(StringPool.computeIfAbsent(localName));
             if(localName!=null&&bone==null)throw new IllegalArgumentException("Unknown group: "+target);
             var group=runtime.object(Context.getCurrentContext());
             for(String op:List.of("move","rotate","scale"))runtime.define(group,op,values->{
                 if(values.length!=3)throw new IllegalArgumentException("Expected x, y, z");
                 float x=(float)ScriptRuntime.finite(values[0]),y=(float)ScriptRuntime.finite(values[1]),z=(float)ScriptRuntime.finite(values[2]);
                 if(!Float.isFinite(x)||!Float.isFinite(y)||!Float.isFinite(z))throw new IllegalArgumentException("Transform overflow");
-                if(bone==null)return group;
-                saved.computeIfAbsent(bone,b->new float[]{b.getPositionX(),b.getPositionY(),b.getPositionZ(),b.getRotationX(),b.getRotationY(),b.getRotationZ(),b.getScaleX(),b.getScaleY(),b.getScaleZ()});
-                switch(op) {
-                    case "move"->{bone.setPositionX(bone.getPositionX()+x);bone.setPositionY(bone.getPositionY()+y);bone.setPositionZ(bone.getPositionZ()+z);}
-                    case "rotate"->{bone.setRotationX(bone.getRotationX()+(float)Math.toRadians(x));bone.setRotationY(bone.getRotationY()+(float)Math.toRadians(y));bone.setRotationZ(bone.getRotationZ()+(float)Math.toRadians(z));}
-                    case "scale"->{bone.setScaleX(bone.getScaleX()*x);bone.setScaleY(bone.getScaleY()*y);bone.setScaleZ(bone.getScaleZ()*z);}
-                }return group;
-            });group.sealObject();return group;
-        });out.sealObject();return out;
+                if(bone!=null)poses.record(bone,op,x,y,z,interpolatePose);return group;
+            });group.sealObject();if(groupObjects.size()<4096)groupObjects.put(target,group);return group;
+        });out.sealObject();if(pose)poseContext=out;else tickContext=out;return out;
     }
 }

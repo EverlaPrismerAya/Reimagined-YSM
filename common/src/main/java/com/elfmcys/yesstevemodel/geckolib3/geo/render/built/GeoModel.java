@@ -103,6 +103,14 @@ public class GeoModel {
     public net.everla.ysmJsLib.ScriptModel scripts;
     public void hasFacingCameraBonesOverride(boolean value) {hasFacingCameraBones |= value;}
     public boolean hasGroupStyles;
+    public boolean overlayOnly;
+    public boolean physicsIsland;
+    public GeoModel renderSource;
+    private net.everla.reimaginedysm.gpu.RenderPartition renderPartition;
+    public net.everla.reimaginedysm.gpu.RenderPartition renderPartition() {
+        if(renderPartition==null)renderPartition=new net.everla.reimaginedysm.gpu.RenderPartition(this);
+        return renderPartition;
+    }
     public boolean hasFrameAnimations;
 
     public static class BakedBone {
@@ -147,6 +155,7 @@ public class GeoModel {
     public static class BakedCube {
         public boolean closedVolume;
         public boolean cullable = false;
+        public BakedCube sourceCube;
         //        public float pivotX, pivotY, pivotZ;
 //        public float rotX, rotY, rotZ;
         public List<BakedQuad> quads = new ObjectArrayList<>();
@@ -157,6 +166,8 @@ public class GeoModel {
         public final float[] uvs = new float[8];
         public final float[] normal = new float[3];
         public boolean isTranslucent;
+        public java.util.BitSet translucentTextures;
+        public boolean translucent(int texture) {return translucentTextures==null?isTranslucent:translucentTextures.get(Math.max(0,texture));}
     }
 
 //    static {
@@ -342,7 +353,21 @@ public class GeoModel {
         return buffer;
     }
 
+    public GeoModel physicsView(net.everla.ysmPhysLib.PhysDefinition definition) {
+        String[][] names=new String[35][];java.util.Arrays.setAll(names,i->new String[0]);
+        java.util.List<IntList> lists=java.util.List.of(leftHandIds,rightHandIds,elytraIds,tacPistolIds,tacRifleIds,leftWaistIds,rightWaistIds,leftShoulderIds,rightShoulderIds,bladeIds,sheathIds,headIds,backpackIds);
+        for(int i=0;i<lists.size();i++)names[i]=lists.get(i).intStream().mapToObj(StringPool::getString).toArray(String[]::new);
+        for(int i=0;i<extraLeftHandGroups.size();i++)names[13+i]=extraLeftHandGroups.get(i).intStream().mapToObj(StringPool::getString).toArray(String[]::new);
+        for(int i=0;i<extraRightHandGroups.size();i++)names[20+i]=extraRightHandGroups.get(i).intStream().mapToObj(StringPool::getString).toArray(String[]::new);
+        for(int i=0;i<passengerGroups.size();i++)names[27+i]=passengerGroups.get(i).intStream().mapToObj(StringPool::getString).toArray(String[]::new);
+        var view=new GeoModel(bones.toArray(GeoBone[]::new),names,new boolean[]{hasCustomLeftHand,hasCustomRightHand,hasCustomLimbs},properties,translucentTexture);
+        view.physicsIsland=true;view.bakedBones=bakedBones;view.scripts=scripts;view.ysmPhysics=definition;
+        view.hasFacingCameraBones=hasFacingCameraBones;view.hasFrameAnimations=hasFrameAnimations;return view;
+    }
+
     public void freeNativeCache() {
+        if(renderSource==null&&!physicsIsland){net.everla.ysmPhysLib.GpuPhysics.disposeModel(this);if(scripts!=null)net.everla.ysmJsLib.CosmicTextures.release(scripts);}
+        if(renderPartition!=null){renderPartition.close();renderPartition=null;}
         if (nativeModelHandle != 0) {
             nDestroyModelCache(nativeModelHandle);
             nativeModelHandle = 0;

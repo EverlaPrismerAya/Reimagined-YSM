@@ -11,7 +11,7 @@ public final class ScriptRuntime {
     private static final ContextFactory FACTORY = new ContextFactory() {
         protected Context makeContext() {
             Context cx=super.makeContext();cx.setOptimizationLevel(-1);cx.setLanguageVersion(Context.VERSION_ES6);
-            cx.setInstructionObserverThreshold(1);cx.setClassShutter(name -> false);cx.setMaximumInterpreterStackDepth(128);
+            cx.setInstructionObserverThreshold(256);cx.setClassShutter(name -> false);cx.setMaximumInterpreterStackDepth(128);
             return cx;
         }
         protected void observeInstructionCount(Context cx,int count) {
@@ -75,7 +75,14 @@ public final class ScriptRuntime {
     public final Map<String,JsonObject> groups=new LinkedHashMap<>();
     public final Map<String,JsonObject> cosmic=new LinkedHashMap<>();
     public final Map<String,Molang> molang=new LinkedHashMap<>();
-    private final List<org.mozilla.javascript.Function> updates=new ArrayList<>(),poses=new ArrayList<>();
+    private final List<org.mozilla.javascript.Function> updates=new ArrayList<>();
+    private record Pose(org.mozilla.javascript.Function function,boolean interpolate) {}
+    private final List<Pose> poses=new ArrayList<>();
+    private record Program(Map<String,ScriptDeclarations.Entry> declarations,List<Script> scripts) {}
+    private static final Map<String,java.lang.ref.WeakReference<Program>> PROGRAMS=new HashMap<>();
+    private final Program program;
+    private static synchronized Program cachedProgram(String digest){PROGRAMS.values().removeIf(ref->ref.get()==null);var ref=PROGRAMS.get(digest);return ref==null?null:ref.get();}
+    private static synchronized void cacheProgram(String digest,Program program){PROGRAMS.put(digest,new java.lang.ref.WeakReference<>(program));}
     private final Set<String> evaluating=new HashSet<>();
     private final Set<String> warned=new HashSet<>();
     private ScriptableObject scope;
@@ -85,7 +92,10 @@ public final class ScriptRuntime {
     public final ScriptBundle bundle;
     public ScriptRuntime(ScriptBundle bundle) {
         this.bundle=bundle;
-        var declarations=ScriptDeclarations.read(bundle);
+        Program program=cachedProgram(bundle.digest);
+        Program[] loaded={program};
+        var declarations=program==null?ScriptDeclarations.read(bundle):program.declarations();
+        Program cached=program;
         run(cx -> {
             scope=cx.initSafeStandardObjects();
             ScriptableObject.getFunctionPrototype(scope).delete("constructor");
@@ -96,7 +106,9 @@ public final class ScriptRuntime {
             api.sealObject();ScriptableObject.defineProperty(scope,"Rysm",api,ScriptableObject.READONLY|ScriptableObject.PERMANENT);
             JsonArray scripts=bundle.manifest().getAsJsonArray("scripts");
             if(scripts==null || scripts.size()>64)throw new IllegalArgumentException("Expected at most 64 script entries");
-            for(JsonElement script:scripts) {
+            var compiled=new ArrayList<Script>();
+            if(cached!=null) {for(Script script:cached.scripts())script.exec(cx,scope);}
+            else for(JsonElement script:scripts) {
                 String path="rysm/"+script.getAsString();
                 try {ScriptBundle.checkPath(path);}catch(Exception e){throw new IllegalArgumentException(e);}
                 String source=bundle.text(path);
@@ -106,7 +118,7 @@ public final class ScriptRuntime {
                     if(node instanceof org.mozilla.javascript.ast.ArrayLiteral a && a.getElements().size()>65536)throw new IllegalArgumentException("Array literal too large");
                     return true;
                 });
-                cx.evaluateString(scope,source,path,1,null);
+                Script executable=cx.compileString(source,path,1,null);compiled.add(executable);executable.exec(cx,scope);
             }
             if(!molang.keySet().equals(declarations.keySet()))throw new IllegalArgumentException("Molang declarations must register unconditionally at load time");
             for(var entry:molang.entrySet()) {
@@ -114,17 +126,28 @@ public final class ScriptRuntime {
                 if(declared.sync()!=actual.sync() || declared.fallback()!=actual.fallback())throw new IllegalArgumentException("Molang declaration mismatch: "+entry.getKey());
             }
             if(molang.values().stream().filter(Molang::sync).count()>ScriptSync.MAX_VALUES)throw new IllegalArgumentException("At most 64 synchronized Molang values");
+            if(cached==null){loaded[0]=new Program(Map.copyOf(declarations),List.copyOf(compiled));cacheProgram(bundle.digest,loaded[0]);}
             registering=false;state=cx.newObject(scope);return null;
         });
+        this.program=loaded[0];
     }
     private Object model(Object[] args) {
         if(!registering)throw new IllegalStateException("Registration is closed");
-        if(args.length!=2 || !(args[0] instanceof CharSequence) || !(args[1] instanceof org.mozilla.javascript.Function f))
+        if((args.length!=2 && args.length!=3) || !(args[0] instanceof CharSequence) || !(args[1] instanceof org.mozilla.javascript.Function f))
             throw new IllegalArgumentException("Expected Rysm.model(eventName, callback)");
         String type=Context.toString(args[0]);
         if(type.equals("tick") || type.equals("pose")) {
-            (type.equals("tick")?updates:poses).add(callback(new Object[]{f}));return null;
+            boolean interpolate=false;
+            if(args.length==3) {
+                if(!type.equals("pose") || !(args[2] instanceof Scriptable options))throw new IllegalArgumentException("Options are only available for pose");
+                for(Object key:options.getIds())if(!key.equals("interpolate"))throw new IllegalArgumentException("Unknown pose option: "+key);
+                Object value=ScriptableObject.getProperty(options,"interpolate");
+                if(value!=Scriptable.NOT_FOUND) {if(!(value instanceof Boolean))throw new IllegalArgumentException("interpolate must be boolean");interpolate=(Boolean)value;}
+            }
+            var function=callback(new Object[]{f});
+            if(type.equals("tick"))updates.add(function);else poses.add(new Pose(function,interpolate));return null;
         }
+        if(args.length!=2)throw new IllegalArgumentException("Unexpected event options");
         var event=object(Context.getCurrentContext());
         switch(type) {
             case "group_modifier" -> define(event,"modify",this::modifyGroup);
@@ -215,6 +238,12 @@ public final class ScriptRuntime {
         };
         ScriptableObject.defineProperty(target,name,fn,ScriptableObject.READONLY|ScriptableObject.PERMANENT);
     }
+    public void readonly(ScriptableObject target,String name,java.util.function.Supplier<Object> value) {
+        var getter=new BaseFunction(scope,ScriptableObject.getFunctionPrototype(scope)) {
+            public Object call(Context cx,Scriptable s,Scriptable self,Object[] args){return value.get();}
+        };
+        target.setGetterOrSetter(name,0,getter,false);target.setAttributes(name,ScriptableObject.PERMANENT);
+    }
     public ScriptableObject snapshot(Map<String,?> values) {return snapshot(values,out->{});}
     public ScriptableObject snapshot(Map<String,?> values,java.util.function.Consumer<ScriptableObject> methods) {
         var out=object(Context.getCurrentContext());
@@ -233,6 +262,10 @@ public final class ScriptRuntime {
             try{return work.apply(cx);}finally{if(outer){cx.removeThreadLocal(ScriptRuntime.class);cx.removeThreadLocal("deadline");cx.removeThreadLocal("allocated");cx.removeThreadLocal("allocationLimit");}}
         });
     }
+    public double evaluateQuery(String name,Object[] args,boolean owner,java.util.function.Function<Context,Scriptable> context) {
+        var declaration=molang.get(name);return owner?evaluate(name,args,context):declaration==null?0:declaration.fallback();
+    }
+    public void tick(boolean owner,java.util.function.Function<Context,Scriptable> context){if(owner)callbacks(false,context);}
     public double evaluate(String name,Object[] args,java.util.function.Function<Context,Scriptable> context) {
         Molang m=molang.get(name);if(m==null)return 0;
         if(args.length>32 || Arrays.stream(args).anyMatch(a->!(a instanceof Number n)||!Double.isFinite(n.doubleValue()))) {
@@ -249,8 +282,15 @@ public final class ScriptRuntime {
         finally{evaluating.remove(name);}
     }
     public void callbacks(boolean pose,java.util.function.Function<Context,Scriptable> context) {
-        try {run(cx -> {for(var f:pose?poses:updates)f.call(cx,scope,scope,new Object[]{context.apply(cx)});return null;});}
-        catch(BudgetExceeded|RuntimeException e){warn(pose?"pose":"update",e);}
+        if(pose){poses(context,value->{});return;}
+        if(updates.isEmpty())return;
+        try {run(cx -> {for(var f:updates)f.call(cx,scope,scope,new Object[]{context.apply(cx)});return null;});}
+        catch(BudgetExceeded|RuntimeException e){warn("update",e);}
+    }
+    public void poses(java.util.function.Function<Context,Scriptable> context,java.util.function.Consumer<Boolean> before) {
+        if(poses.isEmpty())return;
+        try {run(cx -> {for(var pose:poses){before.accept(pose.interpolate());pose.function().call(cx,scope,scope,new Object[]{context.apply(cx)});}return null;});}
+        catch(BudgetExceeded|RuntimeException e){warn("pose",e);}
     }
     public ScriptableObject game(java.util.function.Consumer<String> output) {
         var game=object(Context.getCurrentContext());
