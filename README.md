@@ -2,7 +2,7 @@
 
 # 项目介绍与许可
 
-Reimagined YSM 是一款基于 Yes Steve Model 的模组，它重构了YSM的渲染逻辑与模型加载逻辑，提升了其性能并增加了相当多的新功能。
+Reimagined YSM 是一款 Yes Steve Model 的附属模组，它重构了YSM的渲染逻辑与模型加载逻辑，提升了其性能并增加了相当多的新功能。
 
 本项目的性能优化逻辑基于OpenYSM。
 
