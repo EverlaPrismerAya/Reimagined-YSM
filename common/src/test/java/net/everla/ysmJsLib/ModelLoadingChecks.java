@@ -51,7 +51,29 @@ public final class ModelLoadingChecks {
         }
         oldBinaryLayouts();
         System.out.println("Model loading checks passed: BOM/no-BOM, legacy checksum, UTF-8/GB18030 ZIP and encrypted ZIP diagnostics");
-        if(args.length>0)reportedSources(Path.of(args[0]));
+        for(String arg:args) {
+            Path path=Path.of(arg);
+            if(Files.isDirectory(path))reportedFolder(path);else reportedSources(path);
+        }
+    }
+    private static void reportedFolder(Path folder) throws Exception {
+        try(var reader=new YSMFolderDeserializer(folder)) {
+            var raw=reader.deserialize();var original=raw.rysmBundle;
+            check(original!=null,"Reported folder has no extension");
+            ScriptResources.prepare(raw);
+            try(var serialized=YSMBinarySerializer.serialize(raw,32,true);
+                var binary=new YSMBinaryDeserializer(serialized.toArray(),32)) {
+                var received=binary.deserializeKeepOpen();
+                var model=ScriptResources.compile(received);
+                check(model!=null,"Reported folder extension failed after cache round trip");
+                check(model.groups.equals(new ScriptModel(ScriptSyntaxMigration.upgrade(original)).groups),"Reported folder lost group declarations");
+                System.out.println("Model folder loaded and cache round trip passed: "+folder+" ("+model.groups.size()+" group declarations)");
+            }
+            for(var entry:original.files.entrySet()) {
+                Path file=folder.resolve(entry.getKey());
+                if(Files.isRegularFile(file))check(Arrays.equals(entry.getValue(),Files.readAllBytes(file)),"Loading rewrote source resource: "+file);
+            }
+        }
     }
     private static void oldBinaryLayouts() throws Exception {
         for(int format:List.of(15,18)) {

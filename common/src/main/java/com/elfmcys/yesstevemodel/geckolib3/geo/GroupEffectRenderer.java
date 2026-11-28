@@ -13,6 +13,7 @@ import net.everla.reimaginedysm.gpu.GpuMesh;
 import net.everla.reimaginedysm.gpu.GpuPose;
 import net.everla.reimaginedysm.gpu.GpuRenderPath;
 import net.everla.reimaginedysm.gpu.GroupGpuMesh;
+import net.everla.reimaginedysm.gpu.MaterialAtlasLayout;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.ResourceLocation;
 import org.joml.Matrix3f;
@@ -241,11 +242,20 @@ public final class GroupEffectRenderer {
         return source;
     }
     private static int skinProgram(String fragment) {
-        try {return ShaderUtil.linkProgram(ShaderUtil.compileShaderFromResource(GL20.GL_VERTEX_SHADER,"/group_skin.vsh"),
+        try {return ShaderUtil.linkProgram(atlasVertex("/group_skin.vsh"),
+                ShaderUtil.compileShaderFromResource(GL32.GL_GEOMETRY_SHADER,"/group_material.gsh"),
                 ShaderUtil.compileShader(GL20.GL_FRAGMENT_SHADER,gpuFragment(fragment),fragment));}
         catch(Exception ex) {throw new IllegalStateException("Cannot compile GPU group shader",ex);}
     }
+    private static int atlasVertex(String resource) throws java.io.IOException {
+        String source=ShaderUtil.loadResource(resource);
+        if(resource.equals("/group_material.vsh")) source=source.replace("void main()", "flat out uint surfaceCube;\nvoid main()").replace("position=Position;", "surfaceCube=0u;position=Position;");
+        for(String name:new String[]{"position","uv","vertexColor","normal","surfaceCube"})
+            source=source.replaceAll("\\b"+name+"\\b","atlas_"+name);
+        return ShaderUtil.compileShader(GL20.GL_VERTEX_SHADER,source,resource);
+    }
     private static void gpuSurfaceUniforms(int program,GroupGpuMesh mesh) {
+        uniform(program,"atlasLayout",5);
         uniform(program,"surfaceClipping",mesh.hasTranslucentFaces?1:0);uniform(program,"solidCount",mesh.solidCount);
         uniform(program,"silhouetteMaskEnabled",0);
     }
@@ -333,12 +343,11 @@ public final class GroupEffectRenderer {
     private static void drawGpuMaterials(GeoModel model,GroupGpuMesh mesh,GpuPose instance,int bones,int textureIndex,int part,
                                          int light,int overlay,float r,float g,float b,float alpha,ResourceLocation texture,boolean preview) {
         int triangles=mesh.vertices/3;if(triangles==0) return;
-        int columns=(int)Math.ceil(Math.sqrt(triangles*3.0));
-        int tile=Math.min(128,Math.min(4096,GL11.glGetInteger(GL11.GL_MAX_TEXTURE_SIZE))/columns);
-        if(tile<4) throw new IllegalStateException("Too many GPU group triangles: "+triangles);
+        int[] sourceSize=sourceSize(texture);
+        var layout=mesh.atlasLayout(sourceSize[0],sourceSize[1]);
         int framebuffer=GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
         int[] viewport=new int[4];GL11.glGetIntegerv(GL11.GL_VIEWPORT,viewport);
-        ensureMaterialResources(columns*tile);
+        ensureMaterialResources(layout.size);
         GlStateManager._activeTexture(GL13.GL_TEXTURE0);GlStateManager._bindTexture(Minecraft.getInstance().getTextureManager().getTexture(texture).getId());
         GL11.glViewport(0,0,atlasSize,atlasSize);RenderSystem.disableDepthTest();RenderSystem.disableBlend();RenderSystem.disableCull();
         RenderSystem.colorMask(true,true,true,true);GL30.glClearBufferfv(GL11.GL_COLOR,0,new float[]{0,0,0,0});
@@ -347,8 +356,7 @@ public final class GroupEffectRenderer {
             var bone=model.bakedBones.get(range.bone());
             if(part!=0 && bone.partMask!=part && bone.partMask!=3) continue;
             int program=band!=2 && bone.style.cosmic()?skinCosmic:skinMaterial;
-            bind(program);gpuSurfaceUniforms(program,mesh);uniform(program,"materialPass",1);uniform(program,"atlasColumns",columns);
-            uniform(program,"atlasTriangles",triangles);uniform(program,"atlasBand",band);uniform(program,"atlasTileSize",tile);
+            bind(program);gpuSurfaceUniforms(program,mesh);uniform(program,"materialPass",1);atlasUniforms(program,triangles,band);
             uniform(program,"alphaMode",band==2?0:band+1);GL20.glUniform4f(location(program,"color"),1,1,1,1);
             if(program==skinCosmic) {cosmicUniforms(program,bone.style,preview,light,model,bone.cosmicEffect);scalar(program,"lightmix",0);}
             else uniform(program,"maskOnly",band==2?1:0);
@@ -356,7 +364,7 @@ public final class GroupEffectRenderer {
         }
         instance.ensureGroupBuffers(mesh);
         GlStateManager._glUseProgram(entityCompute);
-        uniform(entityCompute,"columns",columns);uniform(entityCompute,"tileSize",tile);
+        uniform(entityCompute,"atlasLayout",5);
         uniform(entityCompute,"atlasSize",atlasSize);uniform(entityCompute,"overlay",overlay);uniform(entityCompute,"outlineCount",0);
         matrix(entityCompute,RenderSystem.getProjectionMatrix());
         GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,0,mesh.vbo);
@@ -373,7 +381,7 @@ public final class GroupEffectRenderer {
                 float width=bone.style.outlineWidth();int steps=(int)Math.ceil(width),color=outlineColor(model,range.bone(),textureIndex);
                 for(int dy=-steps;dy<=steps;dy++) for(int dx=-steps;dx<=steps;dx++) if(dx!=0 || dy!=0) {
                     Matrix4f projected=new Matrix4f().translation(dx*width/steps*2f/viewport[2],dy*width/steps*2f/viewport[3],.00001f).mul(RenderSystem.getProjectionMatrix());
-                    bakeGpuOutline(mesh,range,bones,triangles,columns,tile,projected,framebuffer,viewport,texture);
+                    bakeGpuOutline(mesh,range,bones,triangles,projected,framebuffer,viewport,texture);
                     Matrix4f shifted=new Matrix4f(RenderSystem.getProjectionMatrix()).invert().mul(projected);
                     GlStateManager._glUseProgram(entityCompute);GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,0,mesh.vbo);GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,1,instance.groupVbo());GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,2,bones);uniform(entityCompute,"outlineFirst",range.first());uniform(entityCompute,"outlineCount",range.count());
                     GL20.glUniformMatrix4fv(location(entityCompute,"outlineTransform"),false,shifted.get(new float[16]));dispatchGroupEntity(mesh.vertices);
@@ -385,14 +393,13 @@ public final class GroupEffectRenderer {
         if(model.isTranslucentTexture(textureIndex)) gpuEntityPass(model,mesh,instance,part,1,texture,false,false,r,g,b,alpha);
     }
 
-    private static void bakeGpuOutline(GroupGpuMesh mesh,GroupGpuMesh.Range range,int bones,int triangles,int columns,int tile,Matrix4f projected,int framebuffer,int[] viewport,ResourceLocation texture) {
+    private static void bakeGpuOutline(GroupGpuMesh mesh,GroupGpuMesh.Range range,int bones,int triangles,Matrix4f projected,int framebuffer,int[] viewport,ResourceLocation texture) {
         GlStateManager._activeTexture(GL13.GL_TEXTURE0);GlStateManager._bindTexture(Minecraft.getInstance().getTextureManager().getTexture(texture).getId());
         GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER,atlasFbo);GL11.glViewport(0,0,atlasSize,atlasSize);
         RenderSystem.disableDepthTest();RenderSystem.disableBlend();RenderSystem.colorMask(true,true,true,true);
         GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,0,bones);GL43.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER,1,mesh.vbo);
         bind(skinMaterial);gpuSurfaceUniforms(skinMaterial,mesh);outlineMaskUniforms(skinMaterial,true,projected);
-        uniform(skinMaterial,"materialPass",1);uniform(skinMaterial,"maskOnly",1);uniform(skinMaterial,"atlasColumns",columns);
-        uniform(skinMaterial,"atlasTriangles",triangles);uniform(skinMaterial,"atlasBand",2);uniform(skinMaterial,"atlasTileSize",tile);uniform(skinMaterial,"alphaMode",0);
+        uniform(skinMaterial,"materialPass",1);uniform(skinMaterial,"maskOnly",1);atlasUniforms(skinMaterial,triangles,2);uniform(skinMaterial,"alphaMode",0);
         GL30.glBindVertexArray(mesh.vao);GL11.glDrawArrays(GL11.GL_TRIANGLES,range.first(),range.count());
         GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER,framebuffer);GL11.glViewport(viewport[0],viewport[1],viewport[2],viewport[3]);
     }
@@ -451,80 +458,91 @@ public final class GroupEffectRenderer {
         int count=batches.stream().mapToInt(batch->batch.triangles.size()).sum();
         if(count==0) return;
         int triangles=count/3;
-        int columns=(int)Math.ceil(Math.sqrt(triangles*3.0));
-        // Bound atlas storage even on dense models; ordinary GPU models never use it.
-        int tile=Math.min(128,Math.min(4096,GL11.glGetInteger(GL11.GL_MAX_TEXTURE_SIZE))/columns);
-        if(tile<4) throw new IllegalStateException("Too many group material triangles: "+triangles);
-        int size=columns*tile;
-        if(size>GL11.glGetInteger(GL11.GL_MAX_TEXTURE_SIZE))
-            throw new IllegalStateException("Group material atlas exceeds GPU texture limit: "+size);
-        int previousDraw=GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
-        int[] previousViewport=new int[4];GL11.glGetIntegerv(GL11.GL_VIEWPORT,previousViewport);
-        ensureMaterialResources(size);
-        // The source stream is shared by all three atlas bands and uploaded once.
-        GL30.glBindVertexArray(vao);GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER,vbo);
-        for(int i=0;i<4;i++) GL20.glEnableVertexAttribArray(i);
-        GL20.glVertexAttribPointer(0,3,GL11.GL_FLOAT,false,48,0);
-        GL20.glVertexAttribPointer(1,2,GL11.GL_FLOAT,false,48,12);
-        GL20.glVertexAttribPointer(2,4,GL11.GL_FLOAT,false,48,20);
-        GL20.glVertexAttribPointer(3,3,GL11.GL_FLOAT,false,48,36);
-        upload(batches,1,1,1,1);
-        GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER,atlasFbo);
-        GL11.glViewport(0,0,size,size);
-        RenderSystem.disableDepthTest();RenderSystem.disableCull();RenderSystem.disableBlend();
-        RenderSystem.colorMask(true,true,true,true);
-        GL30.glClearBufferfv(GL11.GL_COLOR,0,new float[]{0,0,0,0});
-        GlStateManager._activeTexture(GL13.GL_TEXTURE0);
-        GlStateManager._bindTexture(Minecraft.getInstance().getTextureManager().getTexture(texture).getId());
-        for(int band=0;band<3;band++) for(var batch:batches) {
-            var style=model.bakedBones.get(batch.bone).style;
-            int p=band!=2 && style.cosmic()?materialCosmic:material;
-            GlStateManager._glUseProgram(p);
-            uniform(p,"texture0",0);uniform(p,"atlasColumns",columns);
-            uniform(p,"atlasTriangles",triangles);uniform(p,"atlasBand",band);uniform(p,"atlasTileSize",tile);
-            uniform(p,"alphaMode",band==2?0:band+1);
-            if(p==materialCosmic) {
-                cosmicUniforms(p,style,preview,light,model,model.bakedBones.get(batch.bone).cosmicEffect);
-                // This texture is albedo, not a second lit/fogged framebuffer.
-                scalar(p,"lightmix",0);
-            } else uniform(p,"maskOnly",band==2?1:0);
-            GL11.glDrawArrays(GL11.GL_TRIANGLES,batch.first,batch.triangles.size());
+        float[] uvs=new float[count*2];
+        for(var batch:batches) for(int i=0;i<batch.triangles.size();i++) {
+            uvs[(batch.first+i)*2]=batch.triangles.get(i)[3];uvs[(batch.first+i)*2+1]=batch.triangles.get(i)[4];
         }
-        // Entity vertices remain in view space. Normals, overlay and light are
-        // supplied in Minecraft's format, so Iris generates every pack output.
-        uploadEntityMaterials(model,batches,count,triangles,columns,light,overlay);
-        GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER,previousDraw);
-        // Restore the world viewport before applying the pack's entity program.
-        GL11.glViewport(previousViewport[0],previousViewport[1],previousViewport[2],previousViewport[3]);
-        var translucent=new ArrayList<Batch>();
-        for(var batch:batches) for(int i=0;i<batch.triangles.size();i+=3)
-            translucent.add(new Batch(batch.bone,batch.triangles.subList(i,i+3),batch.first+i));
-        translucent.sort(Comparator.comparingDouble(batch->batch.triangles.stream().mapToDouble(v->v[2]).average().orElse(0)));
-        // A depth prepass keeps expanded outline copies behind all opaque parts.
-        entityPass(model,batches,count,0,texture,true,true,r,g,b,alpha);
-        if(!net.everla.reimaginedysm.compat.oculus.OculusCompat.isRenderingShadowPass()
-                && !net.everla.reimaginedysm.compat.oculus.ShaderOutlineCompat.isEnabled()) {
-            int[] viewport=new int[4];GL11.glGetIntegerv(GL11.GL_VIEWPORT,viewport);
-            for(var batch:batches) {
-                var bone=model.bakedBones.get(batch.bone);
-                if(!bone.style.outline() || bone.style.outlineWidth()==0) continue;
-                int color=bone.style.outlineColor();
-                if(color<0) {
-                    int[] colors=model.bakedBones.get(bone.outlineGroup).averageColors;
-                    color=colors==null?0x181818:colors[Math.min(textureIndex,colors.length-1)];
-                }
-                int steps=(int)Math.ceil(bone.style.outlineWidth());
-                for(int dy=-steps;dy<=steps;dy++) for(int dx=-steps;dx<=steps;dx++) if(dx!=0 || dy!=0) {
-                    Matrix4f shifted=new Matrix4f().translation(dx*bone.style.outlineWidth()/steps*2f/viewport[2],
-                            dy*bone.style.outlineWidth()/steps*2f/viewport[3],.00001f).mul(RenderSystem.getProjectionMatrix());
-                    shiftOutlineVertices(model,batch,count,columns,light,overlay,shifted);
-                    entityPass(model,List.of(batch),count,2,texture,false,true,
-                            ((color>>16)&255)/255f,((color>>8)&255)/255f,(color&255)/255f,alpha);
+        int[] sourceSize=sourceSize(texture);
+        try(var layout=new MaterialAtlasLayout(uvs,sourceSize[0],sourceSize[1],GL11.glGetInteger(GL11.GL_MAX_TEXTURE_SIZE))) {
+            int size=layout.size;
+            int previousDraw=GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+            int[] previousViewport=new int[4];GL11.glGetIntegerv(GL11.GL_VIEWPORT,previousViewport);
+            ensureMaterialResources(size);
+            // The source stream is shared by all three atlas bands and uploaded once.
+            GL30.glBindVertexArray(vao);GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER,vbo);
+            for(int i=0;i<4;i++) GL20.glEnableVertexAttribArray(i);
+            GL20.glVertexAttribPointer(0,3,GL11.GL_FLOAT,false,48,0);
+            GL20.glVertexAttribPointer(1,2,GL11.GL_FLOAT,false,48,12);
+            GL20.glVertexAttribPointer(2,4,GL11.GL_FLOAT,false,48,20);
+            GL20.glVertexAttribPointer(3,3,GL11.GL_FLOAT,false,48,36);
+            upload(batches,1,1,1,1);
+            GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER,atlasFbo);
+            GL11.glViewport(0,0,size,size);
+            RenderSystem.disableDepthTest();RenderSystem.disableCull();RenderSystem.disableBlend();
+            RenderSystem.colorMask(true,true,true,true);
+            GL30.glClearBufferfv(GL11.GL_COLOR,0,new float[]{0,0,0,0});
+            GlStateManager._activeTexture(GL13.GL_TEXTURE0);
+            GlStateManager._bindTexture(Minecraft.getInstance().getTextureManager().getTexture(texture).getId());
+            for(int band=0;band<3;band++) for(var batch:batches) {
+                var style=model.bakedBones.get(batch.bone).style;
+                int p=band!=2 && style.cosmic()?materialCosmic:material;
+                GlStateManager._glUseProgram(p);
+                uniform(p,"texture0",0);atlasUniforms(p,triangles,band);
+                uniform(p,"alphaMode",band==2?0:band+1);
+                if(p==materialCosmic) {
+                    cosmicUniforms(p,style,preview,light,model,model.bakedBones.get(batch.bone).cosmicEffect);
+                    // This texture is albedo, not a second lit/fogged framebuffer.
+                    scalar(p,"lightmix",0);
+                } else uniform(p,"maskOnly",band==2?1:0);
+                GL11.glDrawArrays(GL11.GL_TRIANGLES,batch.first,batch.triangles.size());
+            }
+            // Entity vertices remain in view space. Normals, overlay and light are
+            // supplied in Minecraft's format, so Iris generates every pack output.
+            uploadEntityMaterials(model,batches,count,layout,light,overlay);
+            GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER,previousDraw);
+            // Restore the world viewport before applying the pack's entity program.
+            GL11.glViewport(previousViewport[0],previousViewport[1],previousViewport[2],previousViewport[3]);
+            var translucent=new ArrayList<Batch>();
+            for(var batch:batches) for(int i=0;i<batch.triangles.size();i+=3)
+                translucent.add(new Batch(batch.bone,batch.triangles.subList(i,i+3),batch.first+i));
+            translucent.sort(Comparator.comparingDouble(batch->batch.triangles.stream().mapToDouble(v->v[2]).average().orElse(0)));
+            // A depth prepass keeps expanded outline copies behind all opaque parts.
+            entityPass(model,batches,count,0,texture,true,true,r,g,b,alpha);
+            if(!net.everla.reimaginedysm.compat.oculus.OculusCompat.isRenderingShadowPass()
+                    && !net.everla.reimaginedysm.compat.oculus.ShaderOutlineCompat.isEnabled()) {
+                int[] viewport=new int[4];GL11.glGetIntegerv(GL11.GL_VIEWPORT,viewport);
+                for(var batch:batches) {
+                    var bone=model.bakedBones.get(batch.bone);
+                    if(!bone.style.outline() || bone.style.outlineWidth()==0) continue;
+                    int color=bone.style.outlineColor();
+                    if(color<0) {
+                        int[] colors=model.bakedBones.get(bone.outlineGroup).averageColors;
+                        color=colors==null?0x181818:colors[Math.min(textureIndex,colors.length-1)];
+                    }
+                    int steps=(int)Math.ceil(bone.style.outlineWidth());
+                    for(int dy=-steps;dy<=steps;dy++) for(int dx=-steps;dx<=steps;dx++) if(dx!=0 || dy!=0) {
+                        Matrix4f shifted=new Matrix4f().translation(dx*bone.style.outlineWidth()/steps*2f/viewport[2],
+                                dy*bone.style.outlineWidth()/steps*2f/viewport[3],.00001f).mul(RenderSystem.getProjectionMatrix());
+                        shiftOutlineVertices(model,batch,count,layout,light,overlay,shifted);
+                        entityPass(model,List.of(batch),count,2,texture,false,true,
+                                ((color>>16)&255)/255f,((color>>8)&255)/255f,(color&255)/255f,alpha);
+                    }
                 }
             }
+            entityPass(model,batches,count,0,texture,false,true,r,g,b,alpha);
+            entityPass(model,translucent,count,1,texture,false,false,r,g,b,alpha);
         }
-        entityPass(model,batches,count,0,texture,false,true,r,g,b,alpha);
-        entityPass(model,translucent,count,1,texture,false,false,r,g,b,alpha);
+    }
+
+    private static int[] sourceSize(ResourceLocation texture) {
+        GlStateManager._activeTexture(GL13.GL_TEXTURE0);
+        GlStateManager._bindTexture(Minecraft.getInstance().getTextureManager().getTexture(texture).getId());
+        return new int[]{GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D,0,GL11.GL_TEXTURE_WIDTH),
+                GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D,0,GL11.GL_TEXTURE_HEIGHT)};
+    }
+    private static void atlasUniforms(int program,int triangles,int band) {
+        uniform(program,"atlasLayout",5);uniform(program,"atlasSize",atlasSize);
+        uniform(program,"atlasTriangles",triangles);uniform(program,"atlasBand",band);
     }
 
     private static void ensureMaterialResources(int size) {
@@ -556,18 +574,18 @@ public final class GroupEffectRenderer {
             GL20.glBindAttribLocation(p,0,"Position");GL20.glBindAttribLocation(p,1,"UV0");
             GL20.glBindAttribLocation(p,2,"Color");GL20.glBindAttribLocation(p,3,"Normal");
             GL30.glBindFragDataLocation(p,0,"fragColor");
-        },ShaderUtil.compileShaderFromResource(GL20.GL_VERTEX_SHADER,"/group_material.vsh"),
+        },atlasVertex("/group_material.vsh"),
+                ShaderUtil.compileShader(GL32.GL_GEOMETRY_SHADER,ShaderUtil.loadResource("/group_material.gsh").replace("if (!materialPass)","if (false)"),"/group_material.gsh"),
                 ShaderUtil.compileShaderFromResource(GL20.GL_FRAGMENT_SHADER,fragment));
     }
 
-    private static void uploadEntityMaterials(GeoModel model,List<Batch> batches,int count,int triangles,int columns,int light,int overlay) {
+    private static void uploadEntityMaterials(GeoModel model,List<Batch> batches,int count,MaterialAtlasLayout layout,int light,int overlay) {
         ByteBuffer data=MemoryUtil.memAlloc(count*3*36);
         try {
             for(int band=0;band<3;band++) for(var batch:batches) for(int i=0;i<batch.triangles.size();i++) {
                 float[] v=batch.triangles.get(i);int index=batch.first+i;
-                int tile=index/3+band*triangles,corner=index%3,edge=atlasSize/columns;
-                float u=(tile%columns*edge+(corner==1?edge-1:1))/(float)atlasSize;
-                float w=(tile/columns*edge+(corner==2?edge-1:1))/(float)atlasSize;
+                float u=layout.u(index/3,band,index%3,v[3])/atlasSize;
+                float w=layout.v(index/3,band,index%3,v[4])/atlasSize;
                 data.putFloat(v[0]).putFloat(v[1]).putFloat(v[2]).putInt(-1).putFloat(u).putFloat(w);
                 var bone=model.bakedBones.get(batch.bone);
                 data.putInt(overlay).putInt(bone.glow?15728880:light);
@@ -607,7 +625,7 @@ public final class GroupEffectRenderer {
         }
     }
 
-    private static void shiftOutlineVertices(GeoModel model,Batch batch,int count,int columns,int light,int overlay,Matrix4f projection) {
+    private static void shiftOutlineVertices(GeoModel model,Batch batch,int count,MaterialAtlasLayout layout,int light,int overlay,Matrix4f projection) {
         // Shader packs can reconstruct position with their own projection uniforms.
         // Move the actual view-space positions instead of changing ProjMat alone.
         Matrix4f transform=new Matrix4f(RenderSystem.getProjectionMatrix()).invert().mul(projection);
@@ -617,10 +635,10 @@ public final class GroupEffectRenderer {
             for(int i=0;i<batch.triangles.size();i++) {
                 float[] v=batch.triangles.get(i);
                 Vector3f moved=transform.transformProject(new Vector3f(v[0],v[1],v[2]));
-                int index=batch.first+i,tile=index/3+2*count/3,corner=index%3,edge=atlasSize/columns;
+                int index=batch.first+i;
                 data.putFloat(moved.x).putFloat(moved.y).putFloat(moved.z).putInt(-1);
-                data.putFloat((tile%columns*edge+(corner==1?edge-1:1))/(float)atlasSize);
-                data.putFloat((tile/columns*edge+(corner==2?edge-1:1))/(float)atlasSize);
+                data.putFloat(layout.u(index/3,2,index%3,v[3])/atlasSize);
+                data.putFloat(layout.v(index/3,2,index%3,v[4])/atlasSize);
                 data.putInt(overlay).putInt(model.bakedBones.get(batch.bone).glow?15728880:light);
                 for(int axis=5;axis<8;axis++) data.put((byte)Math.round(Math.max(-1,Math.min(1,v[axis]))*127));
                 data.put((byte)0);
@@ -842,7 +860,7 @@ public final class GroupEffectRenderer {
                 srcA=GL11.glGetInteger(GL14.GL_BLEND_SRC_ALPHA),dstA=GL11.glGetInteger(GL14.GL_BLEND_DST_ALPHA);
         final boolean blend=GL11.glIsEnabled(GL11.GL_BLEND),depth=GL11.glIsEnabled(GL11.GL_DEPTH_TEST),cull=GL11.glIsEnabled(GL11.GL_CULL_FACE),
                 depthMask=GL11.glGetBoolean(GL11.GL_DEPTH_WRITEMASK);
-        final byte[] mask=new byte[4];final int starTex;
+        final byte[] mask=new byte[4];final int starTex,layoutTex;
         final int[] textures=new int[5],shaderTextures=new int[5];
         DrawState() {
             GL11.glGetIntegerv(GL11.GL_VIEWPORT,viewport);
@@ -854,6 +872,7 @@ public final class GroupEffectRenderer {
                 shaderTextures[i]=RenderSystem.getShaderTexture(i);
             }
             GlStateManager._activeTexture(GL13.GL_TEXTURE0+3);starTex=GL11.glGetInteger(GL30.GL_TEXTURE_BINDING_2D_ARRAY);
+            GlStateManager._activeTexture(GL13.GL_TEXTURE5);layoutTex=GL11.glGetInteger(GL31.GL_TEXTURE_BINDING_BUFFER);
         }
         public void close() {
             GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER,drawFramebuffer);
@@ -867,6 +886,7 @@ public final class GroupEffectRenderer {
                 RenderSystem.setShaderTexture(i,shaderTextures[i]);
                 GlStateManager._activeTexture(GL13.GL_TEXTURE0+i);GlStateManager._bindTexture(textures[i]);
             }
+            GlStateManager._activeTexture(GL13.GL_TEXTURE5);GL11.glBindTexture(GL31.GL_TEXTURE_BUFFER,layoutTex);
             GlStateManager._activeTexture(GL13.GL_TEXTURE0+3);GL11.glBindTexture(GL30.GL_TEXTURE_2D_ARRAY,starTex);GlStateManager._activeTexture(active);
             if(blend) RenderSystem.enableBlend();else RenderSystem.disableBlend();
             if(depth) RenderSystem.enableDepthTest();else RenderSystem.disableDepthTest();

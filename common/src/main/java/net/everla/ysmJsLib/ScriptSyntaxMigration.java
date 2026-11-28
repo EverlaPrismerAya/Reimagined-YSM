@@ -2,13 +2,32 @@ package net.everla.ysmJsLib;
 
 import org.mozilla.javascript.*;
 import org.mozilla.javascript.ast.*;
-import java.nio.file.*;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 /** Rewrites registration calls by source range, preserving unrelated script text. */
 public final class ScriptSyntaxMigration {
     private ScriptSyntaxMigration() {}
     private record Edit(int start,int end,String text) {}
+    /** Upgrade only the scripts of a model being loaded; never rewrite its source files. */
+    public static ScriptBundle upgrade(ScriptBundle bundle) throws java.io.IOException {
+        var scripts=bundle.manifest().getAsJsonArray("scripts");
+        if(scripts==null || scripts.size()>64)throw new IllegalArgumentException("Expected at most 64 script entries");
+        Map<String,byte[]> files=null;
+        for(var script:scripts) {
+            String path="rysm/"+script.getAsString();ScriptBundle.checkPath(path);
+            String source=bundle.text(path),converted=convert(source);
+            if(source.equals(converted))continue;
+            if(files==null)files=new TreeMap<>(bundle.files);
+            files.put(path,converted.getBytes(StandardCharsets.UTF_8));
+        }
+        if(files==null)return bundle;
+        ScriptBundle upgraded=new ScriptBundle(files);
+        // Validate the converted declarations before advertising or caching this model.
+        ScriptDeclarations.read(upgraded);
+        org.slf4j.LoggerFactory.getLogger("rysmjs").info("[rysmjs] Upgraded legacy JS for loading model extension {}",bundle.digest);
+        return upgraded;
+    }
     public static String convert(String source) {
         var env=new CompilerEnvirons();env.setLanguageVersion(Context.VERSION_ES6);
         var edits=new ArrayList<Edit>();

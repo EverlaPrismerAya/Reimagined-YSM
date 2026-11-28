@@ -26,9 +26,9 @@ public final class GpuSurfaceChecks {
         int fbo=GL30.glGenFramebuffers(),target=GL11.glGenTextures(),skin=GL11.glGenTextures(),program=0;
         var oldProjection=new Matrix4f(RenderSystem.getProjectionMatrix());
         try(var mesh=new GroupGpuMesh(model);var pose=new GpuPose(new float[24],2);var saved=new ShaderUtil.SavedComputeState(6)) {
-            var shaderSource=GroupEffectRenderer.class.getDeclaredMethod("gpuFragment",String.class);shaderSource.setAccessible(true);
+            var shaderSource=GroupEffectRenderer.class.getDeclaredMethod("skinProgram",String.class);shaderSource.setAccessible(true);
             for(String fragment:new String[]{"/group_surface.fsh","/group_cosmic.fsh","/group_material.fsh"}) {
-                int p=ShaderUtil.linkProgram(ShaderUtil.compileShaderFromResource(GL20.GL_VERTEX_SHADER,"/group_skin.vsh"),ShaderUtil.compileShader(GL20.GL_FRAGMENT_SHADER,(String)shaderSource.invoke(null,fragment),fragment));
+                int p=(int)shaderSource.invoke(null,fragment);
                 if(fragment.equals("/group_surface.fsh"))program=p;else GL20.glDeleteProgram(p);
             }
             GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER,fbo);GL13.glActiveTexture(GL13.GL_TEXTURE0);GL11.glBindTexture(GL11.GL_TEXTURE_2D,target);
@@ -84,6 +84,7 @@ public final class GpuSurfaceChecks {
         }
     }
     private static void uniforms(int p,Matrix4f projection) {
+        GL20.glUniform1i(GL20.glGetUniformLocation(p,"atlasLayout"),5);
         GL20.glUniformMatrix4fv(GL20.glGetUniformLocation(p,"Projection"),false,projection.get(new float[16]));
         GL20.glUniform4f(GL20.glGetUniformLocation(p,"color"),1,0,0,1);
         GL20.glUniform1i(GL20.glGetUniformLocation(p,"texture0"),0);GL20.glUniform1i(GL20.glGetUniformLocation(p,"lightmap"),1);GL20.glUniform1i(GL20.glGetUniformLocation(p,"overlayMap"),1);

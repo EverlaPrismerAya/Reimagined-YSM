@@ -116,6 +116,7 @@ tasks.register('modelLoadingChecks', JavaExec) {
     workingDir rootProject.projectDir
     maxHeapSize = '512m'
     if (project.hasProperty('modelLog')) args project.property('modelLog')
+    if (project.hasProperty('modelFolder')) args project.property('modelFolder')
 }
 
 // Official YSM is the sole source of builtin models.

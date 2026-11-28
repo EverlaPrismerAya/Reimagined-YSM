@@ -4,7 +4,8 @@ layout(std430,binding=0) readonly buffer InputBuf {uint source[];};
 layout(std430,binding=1) writeonly buffer OutputBuf {uint target[];};
 struct BoneData {mat4 transform;mat4 normal;ivec4 flags;};
 layout(std430,binding=2) readonly buffer BoneBlock {BoneData bones[];};
-uniform int columns,tileSize,atlasSize,overlay;
+uniform samplerBuffer atlasLayout;
+uniform int atlasSize,overlay;
 uniform mat4 outlineTransform;
 uniform mat4 Projection;
 uniform int outlineFirst,outlineCount;
@@ -38,7 +39,9 @@ void main() {
         if(outlineCount>0) {vec4 moved=outlineTransform*vec4(p,1);pos=moved.xyz/moved.w;}
         uint dst=(band*count+id)*9u;
         int tile=int(id/3u+band*(count/3u)),corner=int(id%3u);
-        vec2 pixel=vec2(tile%columns,tile/columns)*tileSize+vec2(corner==1?tileSize-1:1,corner==2?tileSize-1:1);
+        vec4 mapping=texelFetch(atlasLayout,tile);
+        vec2 uv=vec2(uintBitsToFloat(source[base+3u]),uintBitsToFloat(source[base+4u]));
+        vec2 pixel=(mapping.x<0?vec2(corner==1?-mapping.x-2:0,corner==2?mapping.y-2:0):uv*mapping.xy)+mapping.zw;
         target[dst]=floatBitsToUint(pos.x);target[dst+1u]=floatBitsToUint(pos.y);target[dst+2u]=floatBitsToUint(pos.z);
         target[dst+3u]=hidden?0u:0xffffffffu;
         target[dst+4u]=floatBitsToUint(pixel.x/atlasSize);target[dst+5u]=floatBitsToUint(pixel.y/atlasSize);

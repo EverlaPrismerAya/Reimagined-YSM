@@ -16,11 +16,15 @@ public final class GroupGpuMesh implements AutoCloseable {
 
     public final int solids,solidCount;
     public final boolean hasTranslucentFaces;
+    private final float[] textureCoordinates;
+    private MaterialAtlasLayout atlasLayout;
+    private int atlasWidth,atlasHeight;
     GroupGpuMesh(GeoModel model) {
         var runs=new ArrayList<Range>();
         int count=0,cubes=0;
         for(var bone:model.bakedBones)for(var cube:bone.acceleratedCubes()){count+=cube.quads.size()*6;cubes++;}
         vertices=count;solidCount=cubes;
+        textureCoordinates=new float[vertices*2];
         hasTranslucentFaces=model.bakedBones.stream().flatMap(b->b.acceleratedCubes().stream()).flatMap(c->c.quads.stream()).anyMatch(q->q.isTranslucent);
         ByteBuffer data=MemoryUtil.memAlloc(vertices*32).order(ByteOrder.nativeOrder());
         ByteBuffer bounds=MemoryUtil.memCalloc(Math.max(1,cubes)*144).order(ByteOrder.nativeOrder());
@@ -47,6 +51,7 @@ public final class GroupGpuMesh implements AutoCloseable {
                     for(var q:cube.quads) {
                         int normal=0;for(int axis=0;axis<3;axis++)normal|=(Math.round(q.normal[axis]*511)&1023)<<(axis*10);
                         for(int v:new int[]{0,1,2,0,2,3}) {
+                            textureCoordinates[first*2]=q.uvs[v*2];textureCoordinates[first*2+1]=q.uvs[v*2+1];
                             for(int axis=0;axis<3;axis++)data.putFloat(q.positions[v*3+axis]);
                             data.putFloat(q.uvs[v*2]).putFloat(q.uvs[v*2+1]).putInt(normal)
                                 .putInt(boneId|(cube.cullable?1<<24:0)).putInt(cubeId);first++;
@@ -70,5 +75,13 @@ public final class GroupGpuMesh implements AutoCloseable {
         } finally {MemoryUtil.memFree(data);MemoryUtil.memFree(bounds);}
     }
 
-    public void close() {GL15.glDeleteBuffers(vbo);GL15.glDeleteBuffers(solids);GL30.glDeleteVertexArrays(vao);}
+    public MaterialAtlasLayout atlasLayout(int width,int height) {
+        if(atlasLayout==null || atlasWidth!=width || atlasHeight!=height) {
+            if(atlasLayout!=null)atlasLayout.close();
+            atlasLayout=new MaterialAtlasLayout(textureCoordinates,width,height,GL11.glGetInteger(GL11.GL_MAX_TEXTURE_SIZE));
+            atlasWidth=width;atlasHeight=height;
+        }
+        atlasLayout.bind();return atlasLayout;
+    }
+    public void close() {if(atlasLayout!=null)atlasLayout.close();GL15.glDeleteBuffers(vbo);GL15.glDeleteBuffers(solids);GL30.glDeleteVertexArrays(vao);}
 }

@@ -83,6 +83,7 @@ public final class ScriptResources {
     public static void prepare(RawYsmModel raw) {
         if(raw.rysmBundle==null)return;
         try {
+            raw.rysmBundle=ScriptSyntaxMigration.upgrade(raw.rysmBundle);
             apply(raw,restore(raw,raw.rysmBundle));
             var files=new TreeMap<>(raw.rysmBundle.files);
             JsonElement tree=modelTree(raw);var recovery=raw.rysmBundle.files.containsKey("rysm/restore.json")?JsonParser.parseString(raw.rysmBundle.text("rysm/restore.json")).getAsJsonObject():new JsonObject();
@@ -154,6 +155,7 @@ public final class ScriptResources {
         if(raw.rysmSourceChecked&&raw.rysmBundle==null)return null;
         ScriptBundle bundle=raw.rysmBundle!=null?raw.rysmBundle:get(raw.properties.sha256);if(bundle==null)return null;
         try {
+            bundle=ScriptSyntaxMigration.upgrade(bundle);
             var model=new ScriptModel(bundle);
             apply(raw,restore(raw,bundle));
             if(model.logKeyBindingsRequested)ScriptKeyLogger.log(bundle.digest);

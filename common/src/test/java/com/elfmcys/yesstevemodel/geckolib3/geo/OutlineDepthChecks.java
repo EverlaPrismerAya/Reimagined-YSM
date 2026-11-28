@@ -48,6 +48,7 @@ public final class OutlineDepthChecks {
             if(GL11.glGetBoolean(GL11.GL_DEPTH_WRITEMASK))throw new AssertionError("Transparent outline writes depth");
             GroupEffectRenderer.outlineDepth(true);draw(program,.4f,0,0,1);expect(0,0,1,"Transparent outline claimed opaque depth");
             skinShader();
+            MaterialAtlasChecks.run();
             System.out.println("Outline depth ordering, foreground occlusion and transparent depth policy passed");
         } finally {
             GL20.glUseProgram(0);GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER,0);GL30.glBindVertexArray(0);
@@ -70,7 +71,7 @@ public final class OutlineDepthChecks {
             GL30.glBindVertexArray(vao);GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER,vertices);GL15.glBufferData(GL15.GL_ARRAY_BUFFER,positions,GL15.GL_STATIC_DRAW);
             GL20.glEnableVertexAttribArray(0);GL20.glVertexAttribPointer(0,3,GL11.GL_FLOAT,false,12,0);
             GL30.glVertexAttribI1ui(3,0);GL20.glVertexAttrib1f(4,0);
-            GL20.glUseProgram(program);clear();GroupEffectRenderer.outlineDepth(true);
+            GL20.glUseProgram(program);GL20.glUniform1i(GL20.glGetUniformLocation(program,"atlasLayout"),5);clear();GroupEffectRenderer.outlineDepth(true);
             GL13.glActiveTexture(GL13.GL_TEXTURE0);GL11.glBindTexture(GL11.GL_TEXTURE_2D,texture);
             var white=java.nio.ByteBuffer.allocateDirect(16*16*4);while(white.hasRemaining())white.put((byte)255);white.flip();
             GL11.glTexImage2D(GL11.GL_TEXTURE_2D,0,GL11.GL_RGBA8,16,16,0,GL11.GL_RGBA,GL11.GL_UNSIGNED_BYTE,white);

@@ -52,9 +52,32 @@ public final class ScriptChecks {
         modelScopes();
         synchronization();
         functionFallbacks();
+        automaticUpgrade();
         if(args.length>0 && !args[0].startsWith("--")){examples(Path.of(args[0]));}
         if(Arrays.asList(args).contains("--gpu"))gpu();
         System.out.println("RYSM script checks passed");
+    }
+    private static void automaticUpgrade() throws Exception {
+        String source="// Rysm.group('comment',{});\nconst text=\"Rysm.group('text',{});\";Rysm.group('cape',{glow:true});Rysm.molang('value',game=>2,{fallback:7});";
+        var legacy=new ScriptBundle(Map.of(
+            "rysm/manifest.json","{\"version\":1,\"scripts\":[\"scripts/old.js\",\"scripts/current.js\"]}".getBytes(StandardCharsets.UTF_8),
+            "rysm/scripts/old.js",source.getBytes(StandardCharsets.UTF_8),
+            "rysm/scripts/current.js","Rysm.model('group_modifier',event=>event.modify('hat').item());".getBytes(StandardCharsets.UTF_8),
+            "rysm/textures/keep.bin",new byte[]{0,1,2}));
+        var upgraded=ScriptSyntaxMigration.upgrade(legacy);
+        check(legacy.text("rysm/scripts/old.js").equals(source),"Automatic upgrade changed the source bundle");
+        check(upgraded.text("rysm/scripts/old.js").startsWith("// Rysm.group('comment',{});\nconst text=\"Rysm.group('text',{});\";"),"Automatic upgrade changed comments or strings");
+        check(!legacy.digest.equals(upgraded.digest)&&ScriptSyntaxMigration.upgrade(upgraded)==upgraded,"Automatic upgrade hash or idempotence");
+        check(Arrays.equals(legacy.files.get("rysm/textures/keep.bin"),upgraded.files.get("rysm/textures/keep.bin"))&&legacy.text("rysm/scripts/current.js").equals(upgraded.text("rysm/scripts/current.js")),"Automatic upgrade changed unrelated resources");
+        var raw=new com.elfmcys.yesstevemodel.resource.pojo.RawYsmModel();
+        raw.properties.sha256="b".repeat(64);raw.rysmBundle=legacy;
+        raw.functionFiles.put("test",new com.elfmcys.yesstevemodel.resource.pojo.RawYsmModel.RawDataFile("test","rysmjs.value()".getBytes(StandardCharsets.UTF_8)));
+        ScriptResources.prepare(raw);
+        check(new String(raw.functionFiles.get("test").data,StandardCharsets.UTF_8).equals("(7.0)"),"Server upgrade missed legacy Molang fallback");
+        var model=ScriptResources.compile(raw);
+        check(model!=null&&model.flag("cape","glow")&&model.flag("hat","item"),"Prepared legacy model failed to compile");
+        var received=new com.elfmcys.yesstevemodel.resource.pojo.RawYsmModel();received.rysmBundle=legacy;
+        check(ScriptResources.compile(received)!=null,"Received legacy extension did not upgrade at model load");
     }
     private static void attributes() throws Exception {
         var runtime=new ScriptRuntime(bundle("""
