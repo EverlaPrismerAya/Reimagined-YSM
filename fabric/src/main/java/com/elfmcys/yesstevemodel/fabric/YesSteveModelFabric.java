@@ -1,8 +1,8 @@
 package com.elfmcys.yesstevemodel.fabric;
 
-import com.elfmcys.yesstevemodel.RuntimePolicy;
+import net.everla.reimaginedysm.core.RuntimePolicy;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import net.fabricmc.api.ModInitializer;
 
 public final class YesSteveModelFabric implements ModInitializer {

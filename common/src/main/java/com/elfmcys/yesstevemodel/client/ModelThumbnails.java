@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.client;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.model.*;
 import com.elfmcys.yesstevemodel.network.NetworkHandler;
 import com.elfmcys.yesstevemodel.network.message.C2SModelThumbnailsPacket;

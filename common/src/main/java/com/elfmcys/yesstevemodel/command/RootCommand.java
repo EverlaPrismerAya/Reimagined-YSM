@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.command;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.command.subcommands.*;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;

@@ -117,3 +117,8 @@ tasks.register('modelLoadingChecks', JavaExec) {
     maxHeapSize = '512m'
     if (project.hasProperty('modelLog')) args project.property('modelLog')
 }
+
+// Official YSM is the sole source of builtin models.
+tasks.withType(ProcessResources).configureEach {
+    exclude 'assets/yes_steve_model/builtin/**'
+}

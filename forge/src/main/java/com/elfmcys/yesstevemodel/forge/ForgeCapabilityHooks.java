@@ -1,8 +1,8 @@
 package com.elfmcys.yesstevemodel.forge;
 
-import com.elfmcys.yesstevemodel.RuntimePolicy;
+import net.everla.reimaginedysm.core.RuntimePolicy;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.forge.capability.AuthModelsCapabilityProvider;
 import com.elfmcys.yesstevemodel.forge.capability.ModelInfoCapabilityProvider;
 import com.elfmcys.yesstevemodel.forge.capability.PlayerCapabilityProvider;
@@ -35,14 +35,14 @@ import java.util.function.Consumer;
 @Mod.EventBusSubscriber(modid = YesSteveModel.MOD_ID)
 public final class ForgeCapabilityHooks {
 
-    private static final ResourceLocation MODEL_INFO_CAP = new ResourceLocation(YesSteveModel.MOD_ID, "model_id");
-    private static final ResourceLocation PROJECTILE_MODEL_CAP = new ResourceLocation(YesSteveModel.MOD_ID, "projectile_model_id");
-    private static final ResourceLocation VEHICLE_MODEL_CAP = new ResourceLocation(YesSteveModel.MOD_ID, "vehicle_model_id");
-    private static final ResourceLocation AUTH_MODELS_CAP = new ResourceLocation(YesSteveModel.MOD_ID, "own_models");
-    private static final ResourceLocation STAR_MODELS_CAP = new ResourceLocation(YesSteveModel.MOD_ID, "star_models");
-    private static final ResourceLocation PLAYER_CAP = new ResourceLocation(YesSteveModel.MOD_ID, "animatable");
-    private static final ResourceLocation PROJECTILE_CAP = new ResourceLocation(YesSteveModel.MOD_ID, "projectile_animatable");
-    private static final ResourceLocation VEHICLE_CAP = new ResourceLocation(YesSteveModel.MOD_ID, "vehicle_animatable");
+    private static final ResourceLocation MODEL_INFO_CAP = new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.DATA_NAMESPACE, "model_id");
+    private static final ResourceLocation PROJECTILE_MODEL_CAP = new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.DATA_NAMESPACE, "projectile_model_id");
+    private static final ResourceLocation VEHICLE_MODEL_CAP = new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.DATA_NAMESPACE, "vehicle_model_id");
+    private static final ResourceLocation AUTH_MODELS_CAP = new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.DATA_NAMESPACE, "own_models");
+    private static final ResourceLocation STAR_MODELS_CAP = new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.DATA_NAMESPACE, "star_models");
+    private static final ResourceLocation PLAYER_CAP = new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.DATA_NAMESPACE, "animatable");
+    private static final ResourceLocation PROJECTILE_CAP = new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.DATA_NAMESPACE, "projectile_animatable");
+    private static final ResourceLocation VEHICLE_CAP = new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.DATA_NAMESPACE, "vehicle_animatable");
 
     private ForgeCapabilityHooks() {
     }

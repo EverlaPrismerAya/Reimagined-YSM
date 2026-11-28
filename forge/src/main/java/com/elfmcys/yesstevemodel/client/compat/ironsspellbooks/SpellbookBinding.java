@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.client.compat.ironsspellbooks;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.client.animation.IAnimationPredicate;
 import com.elfmcys.yesstevemodel.client.entity.LivingAnimatable;
 import com.elfmcys.yesstevemodel.geckolib3.core.event.predicate.AnimationEvent;

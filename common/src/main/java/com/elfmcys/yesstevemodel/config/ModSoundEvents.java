@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.config;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import dev.architectury.registry.registries.DeferredRegister;
 import dev.architectury.registry.registries.RegistrySupplier;
 import net.minecraft.core.registries.Registries;
@@ -12,5 +12,5 @@ public class ModSoundEvents {
     public static final DeferredRegister<SoundEvent> REGISTER = DeferredRegister.create(YesSteveModel.MOD_ID, Registries.SOUND_EVENT);
 
     public static final RegistrySupplier<SoundEvent> CUSTOM_SOUND = REGISTER.register("custom",
-            () -> SoundEvent.createFixedRangeEvent(new ResourceLocation(YesSteveModel.MOD_ID, "custom"), 16.0f));
+            () -> SoundEvent.createFixedRangeEvent(new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.RESOURCE_NAMESPACE, "custom"), 16.0f));
 }

@@ -1,6 +1,6 @@
 package net.everla.reimaginedysm.gui.components;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.client.gui.ModelMetadataPresenter;
 import com.elfmcys.yesstevemodel.client.upload.IResourceLocatable;
 import com.elfmcys.yesstevemodel.resource.models.AuthorInfo;
@@ -19,7 +19,7 @@ import net.everla.reimaginedysm.gui.OptionRow;
 import java.util.List;
 
 public final class AuthorRow extends OptionRow<Object> {
-    private static final ResourceLocation DEFAULT_AVATAR = new ResourceLocation(YesSteveModel.MOD_ID, "texture/default_avatar.png");
+    private static final ResourceLocation DEFAULT_AVATAR = new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.RESOURCE_NAMESPACE, "texture/default_avatar.png");
     private static final int AVATAR_SIZE = 48;
 
     private final ModernModelInfoScreen owner;

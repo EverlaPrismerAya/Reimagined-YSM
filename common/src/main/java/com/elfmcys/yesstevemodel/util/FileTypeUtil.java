@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.util;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.geckolib3.core.molang.util.StringPool;
 import com.google.common.collect.Sets;
 import it.unimi.dsi.fastutil.Pair;
@@ -56,7 +56,7 @@ public final class FileTypeUtil {
     }
 
     public static ResourceLocation getPackIconLocation(String str) {
-        return new ResourceLocation(YesSteveModel.MOD_ID, "model_pack_icon/" + str.hashCode());
+        return new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.RESOURCE_NAMESPACE, "model_pack_icon/" + str.hashCode());
     }
 
     /**

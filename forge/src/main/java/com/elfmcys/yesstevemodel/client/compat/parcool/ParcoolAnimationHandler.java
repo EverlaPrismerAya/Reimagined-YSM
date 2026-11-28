@@ -7,7 +7,7 @@ import com.alrex.parcool.common.capability.Animation;
 import com.alrex.parcool.common.capability.Parkourability;
 import com.alrex.parcool.utilities.VectorUtil;
 import com.elfmcys.yesstevemodel.geckolib3.core.molang.util.StringPool;
-import com.elfmcys.yesstevemodel.forge.mixin.client.parcool.*;
+import net.everla.reimaginedysm.forge.mixin.client.parcool.*;
 import com.google.common.collect.Maps;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.Vec3;

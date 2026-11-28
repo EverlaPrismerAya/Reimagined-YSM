@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.client.gui.button;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.client.gui.ISpecialWidget;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -16,7 +16,7 @@ import java.util.function.Consumer;
 @Environment(EnvType.CLIENT)
 public class ConfigCheckBox extends StateSwitchingButton implements ISpecialWidget {
 
-    private static final ResourceLocation location = new ResourceLocation(YesSteveModel.MOD_ID, "texture/roulette.png");
+    private static final ResourceLocation location = new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.RESOURCE_NAMESPACE, "texture/roulette.png");
 
     private final Consumer<Boolean> consumer2;
 

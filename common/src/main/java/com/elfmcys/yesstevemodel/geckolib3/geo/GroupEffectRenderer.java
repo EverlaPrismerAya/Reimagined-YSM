@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.geckolib3.geo;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.geckolib3.geo.render.built.GeoModel;
 import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
@@ -77,7 +77,7 @@ public final class GroupEffectRenderer {
                                   int textureIndex,int part,int light,int overlay,float r,float g,float b,float alpha,
                                   ResourceLocation texture,boolean preview,boolean dynamicOnly) {
         if(model.bakedBones==null || !compile()) return false;
-        if(!dynamicOnly && GpuCapability.isAvailable() && com.elfmcys.yesstevemodel.NativeLibLoader.isLoaded()) {
+        if(!dynamicOnly && GpuCapability.isAvailable() && net.everla.reimaginedysm.core.NativeLibLoader.isLoaded()) {
             try(var saved=new DrawState();var compute=new ShaderUtil.SavedComputeState(6)) {
                 if(renderGpu(pose,model,params,textureIndex,part,light,overlay,r,g,b,alpha,texture,preview)) {
                     if(model.hasFacingCameraBones || model.hasFrameAnimations) render(pose,model,params,state,textureIndex,part,light,overlay,r,g,b,alpha,texture,preview,true);
@@ -732,7 +732,7 @@ public final class GroupEffectRenderer {
     private static void surfaceUniforms(int program,int light,int overlay) {
         uniform(program,"lightmap",2);uniform(program,"overlayMap",1);
         uniform(program,"packedLight",light);uniform(program,"packedOverlay",overlay);
-        var lights=com.elfmcys.yesstevemodel.mixin.client.RenderSystemAccessor.ysm$getShaderLightDirections();
+        var lights=net.everla.reimaginedysm.mixin.client.RenderSystemAccessor.ysm$getShaderLightDirections();
         for(int i=0;i<2;i++) {
             Vector3f v=lights!=null && lights[i]!=null?lights[i]:new Vector3f(i==0?.2f:-.2f,1,-.7f);
             GL20.glUniform3f(location(program,"light"+i),v.x,v.y,v.z);
@@ -781,7 +781,7 @@ public final class GroupEffectRenderer {
             Arrays.fill(lastFrames,-1);
             try {
                 for(int i=0;i<10;i++) {
-                    String path="/assets/yes_steve_model/textures/cosmic/cosmic_"+i+".png";
+                    String path="/assets/rysm/textures/cosmic/cosmic_"+i+".png";
                     java.awt.image.BufferedImage image;
                     try(var in=GroupEffectRenderer.class.getResourceAsStream(path)) {image=ImageIO.read(in);}
                     ByteBuffer data=MemoryUtil.memAlloc(image.getWidth()*image.getHeight()*4);

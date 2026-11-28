@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.client.compat.jade;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.forge.capability.PlayerCapabilityProvider;
 import com.elfmcys.yesstevemodel.forge.capability.VehicleCapabilityProvider;
 import com.elfmcys.yesstevemodel.util.FileTypeUtil;
@@ -19,7 +19,7 @@ public class JadeWailaPlugin implements IWailaPlugin {
 
     private static class ModelInfoComponentProvider implements IEntityComponentProvider {
 
-        private static final ResourceLocation RESOURCE_ID = new ResourceLocation(YesSteveModel.MOD_ID, "model_info");
+        private static final ResourceLocation RESOURCE_ID = new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.RESOURCE_NAMESPACE, "model_info");
 
         private ModelInfoComponentProvider() {
         }

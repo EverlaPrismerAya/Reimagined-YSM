@@ -1,7 +1,7 @@
 package com.elfmcys.yesstevemodel.client.compat.touhoulittlemaid;
 
 import com.elfmcys.yesstevemodel.model.ServerModelManager;
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.client.compat.touhoulittlemaid.capability.MaidCapabilityProvider;
 import com.elfmcys.yesstevemodel.forge.capability.ProjectileModelCapabilityProvider;
 import com.elfmcys.yesstevemodel.forge.capability.VehicleModelCapabilityProvider;

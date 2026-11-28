@@ -17,7 +17,7 @@ public final class ClientOnlyFavorites {
             };
             try {
                 Path file=file();if(Files.isRegularFile(file))local.setStarModels(new HashSet<>(Files.readAllLines(file)));
-            } catch(Exception ex) { com.elfmcys.yesstevemodel.YesSteveModel.LOGGER.warn("Cannot read local favorites",ex); }
+            } catch(Exception ex) { net.everla.reimaginedysm.core.YesSteveModel.LOGGER.warn("Cannot read local favorites",ex); }
         }
         return Optional.of(local);
     }
@@ -28,6 +28,6 @@ public final class ClientOnlyFavorites {
             Path temp=Files.createTempFile(file.getParent(),"favorites-",".tmp");
             try { Files.write(temp,local.getStarModels().stream().sorted().toList());Files.move(temp,file,StandardCopyOption.REPLACE_EXISTING); }
             finally { Files.deleteIfExists(temp); }
-        } catch(Exception ex) { com.elfmcys.yesstevemodel.YesSteveModel.LOGGER.warn("Cannot save local favorites",ex); }
+        } catch(Exception ex) { net.everla.reimaginedysm.core.YesSteveModel.LOGGER.warn("Cannot save local favorites",ex); }
     }
 }

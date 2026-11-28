@@ -1,7 +1,7 @@
 package net.everla.reimaginedysm.gpu;
 
 import com.elfmcys.yesstevemodel.geckolib3.geo.render.built.GeoModel;
-import com.elfmcys.yesstevemodel.mixin.client.RenderSystemAccessor;
+import net.everla.reimaginedysm.mixin.client.RenderSystemAccessor;
 import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;

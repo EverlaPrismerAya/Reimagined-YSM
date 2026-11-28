@@ -1,7 +1,7 @@
 package net.everla.reimaginedysm.api.network.fabric;
 
-import com.elfmcys.yesstevemodel.mixin.ConnectionAccessor;
-import com.elfmcys.yesstevemodel.mixin.ServerCommonPacketListenerImplAccessor;
+import net.everla.reimaginedysm.mixin.ConnectionAccessor;
+import net.everla.reimaginedysm.mixin.ServerCommonPacketListenerImplAccessor;
 import com.elfmcys.yesstevemodel.network.NetworkHandler;
 import com.elfmcys.yesstevemodel.network.message.C2SModelSyncPayload;
 import io.netty.buffer.Unpooled;

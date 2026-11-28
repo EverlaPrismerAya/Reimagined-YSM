@@ -87,3 +87,9 @@ shadowJar {
 remapJar {
     input.set shadowJar.archiveFile
 }
+
+// Official YSM is the sole source of builtin models.
+tasks.withType(ProcessResources).configureEach {
+    exclude 'assets/yes_steve_model/builtin/**'
+}
+tasks.named('shadowJar') { exclude 'assets/yes_steve_model/builtin/**' }

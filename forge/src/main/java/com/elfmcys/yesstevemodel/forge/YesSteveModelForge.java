@@ -1,8 +1,8 @@
 package com.elfmcys.yesstevemodel.forge;
 
-import com.elfmcys.yesstevemodel.RuntimePolicy;
+import net.everla.reimaginedysm.core.RuntimePolicy;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.capability.AuthModelsCapability;
 import com.elfmcys.yesstevemodel.capability.ModelInfoCapability;
 import com.elfmcys.yesstevemodel.capability.PlayerCapability;
@@ -23,6 +23,7 @@ import net.everla.reimaginedysm.api.PlatformAPI;
 public final class YesSteveModelForge {
 
     public YesSteveModelForge() {
+        net.everla.ysmCompactLayer.forge.ForgeOfficialDisabler.verifyDisabled();
         if (RuntimePolicy.isDisabled()) {
             return;
         }

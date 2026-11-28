@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.client.compat.oculus;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.client.texture.OuterFileTexture;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.coderbot.iris.texture.pbr.loader.PBRTextureLoader;

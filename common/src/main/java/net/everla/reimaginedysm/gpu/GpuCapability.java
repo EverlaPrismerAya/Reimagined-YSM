@@ -1,6 +1,6 @@
 package net.everla.reimaginedysm.gpu;
 
-import com.elfmcys.yesstevemodel.NativeLibLoader;
+import net.everla.reimaginedysm.core.NativeLibLoader;
 import com.mojang.blaze3d.systems.RenderSystem;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GL11;

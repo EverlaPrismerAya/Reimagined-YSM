@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.resource;
 
-import com.elfmcys.yesstevemodel.NativeLibLoader;
+import net.everla.reimaginedysm.core.NativeLibLoader;
 import com.elfmcys.yesstevemodel.audio.AudioCodec;
 import com.elfmcys.yesstevemodel.audio.AudioTrackData;
 import com.elfmcys.yesstevemodel.client.ClientModelInfo;
@@ -549,7 +549,7 @@ public class YSMClientMapper {
                         throw new IllegalArgumentException("frame strip must have positive height and fit inside the texture");
                 } catch (IllegalArgumentException ex) {
                     bb.frameAnimation=null;
-                    com.elfmcys.yesstevemodel.YesSteveModel.LOGGER.warn("[FrameAnimation] {}: {}", rb.name, ex.getMessage());
+                    net.everla.reimaginedysm.core.YesSteveModel.LOGGER.warn("[FrameAnimation] {}: {}", rb.name, ex.getMessage());
                 }
             }
             boolean forceCull = allCutout;
@@ -560,7 +560,7 @@ public class YSMClientMapper {
                 var faces=rb.cubes.get(0).faces.stream().filter(ItemThickness::hasUv).toList();
                 if(faces.size()==1) itemFace=faces.get(0);
             }
-            if(item && itemFace==null) com.elfmcys.yesstevemodel.YesSteveModel.LOGGER.warn("[ysmItem] {}: expected exactly one cube with one UV face",rb.name);
+            if(item && itemFace==null) net.everla.reimaginedysm.core.YesSteveModel.LOGGER.warn("[ysmItem] {}: expected exactly one cube with one UV face",rb.name);
             for (RawYsmModel.RawCube rc : rb.cubes) {
                 if (hasPhysics) {
                     float[] physicsFaces = new float[rc.faces.size() * 12];
@@ -703,7 +703,7 @@ public class YSMClientMapper {
         }
         GeoModel.classifyFacingCameraBones(bakedBones);
         if (hasPhysics) mesh.ysmPhysics = new net.everla.ysmPhysLib.PhysDefinition(mesh,
-                message -> com.elfmcys.yesstevemodel.YesSteveModel.LOGGER.warn("[ysmPhys] {}: {}", rawGeo.identifier, message));
+                message -> net.everla.reimaginedysm.core.YesSteveModel.LOGGER.warn("[ysmPhys] {}: {}", rawGeo.identifier, message));
         if (NativeLibLoader.isLoaded()) mesh.buildNativeCache();
         return mesh;
     }

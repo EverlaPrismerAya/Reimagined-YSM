@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.client.compat.touhoulittlemaid.event;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.forge.capability.ModelInfoCapabilityProvider;
 import com.github.tartaricacid.touhoulittlemaid.init.InitEntities;
 import com.github.tartaricacid.touhoulittlemaid.item.ItemHakureiGohei;

@@ -33,7 +33,7 @@ public final class LocalRoamingStore {
                         if(entry.getKey().length()<=256 && Float.isFinite(value) && vars.size()<4096)vars.put(StringPool.computeIfAbsent(entry.getKey()),value);
                     }
                 }
-            } catch(Exception ex) { com.elfmcys.yesstevemodel.YesSteveModel.LOGGER.warn("Cannot read local roaming state {}",file,ex); }
+            } catch(Exception ex) { net.everla.reimaginedysm.core.YesSteveModel.LOGGER.warn("Cannot read local roaming state {}",file,ex); }
             return vars;
         });
     }
@@ -55,7 +55,7 @@ public final class LocalRoamingStore {
                 try { Files.writeString(temp,entry.getValue());Files.move(temp,file,StandardCopyOption.REPLACE_EXISTING); }
                 finally { Files.deleteIfExists(temp); }
                 it.remove();
-            } catch(Exception ex) { com.elfmcys.yesstevemodel.YesSteveModel.LOGGER.warn("Cannot save local roaming state {}",file,ex); }
+            } catch(Exception ex) { net.everla.reimaginedysm.core.YesSteveModel.LOGGER.warn("Cannot save local roaming state {}",file,ex); }
         }
     }
     public void close() { writer.shutdown();flush(); }

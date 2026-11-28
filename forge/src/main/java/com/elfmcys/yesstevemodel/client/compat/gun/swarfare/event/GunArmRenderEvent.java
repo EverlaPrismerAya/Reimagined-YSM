@@ -1,7 +1,7 @@
 package com.elfmcys.yesstevemodel.client.compat.gun.swarfare.event;
 
 import com.atsuishio.superbwarfare.api.event.RenderPlayerArmEvent;
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.forge.capability.PlayerCapabilityProvider;
 import com.elfmcys.yesstevemodel.geckolib3.geo.render.built.GeoModel;
 import com.elfmcys.yesstevemodel.client.model.ModelAssembly;

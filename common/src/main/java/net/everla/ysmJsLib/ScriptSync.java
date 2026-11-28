@@ -50,7 +50,7 @@ public final class ScriptSync {
     }
     public static void clearServer(){CAPABLE.clear();STATES.clear();LAST_TICK.clear();DECLARATIONS.clear();TRACKING.clear();}
     private static boolean capable(ServerPlayer player) {
-        return CAPABLE.get(player.getUUID())==((com.elfmcys.yesstevemodel.mixin.ServerCommonPacketListenerImplAccessor)player.connection).ysm$getConnection()
+        return CAPABLE.get(player.getUUID())==((net.everla.reimaginedysm.mixin.ServerCommonPacketListenerImplAccessor)player.connection).ysm$getConnection()
             && NetworkHandler.isPlayerConnected(player);
     }
     private static String modelHash(ServerPlayer player,String model) {

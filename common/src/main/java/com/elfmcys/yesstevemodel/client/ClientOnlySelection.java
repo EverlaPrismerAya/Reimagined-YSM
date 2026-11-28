@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.client;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.model.ServerModelManager;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;

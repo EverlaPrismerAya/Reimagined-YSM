@@ -1,6 +1,6 @@
 package net.everla.reimaginedysm.gpu;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.util.log.ChatLogger;
 import com.mojang.blaze3d.systems.RenderSystem;
 import org.lwjgl.opengl.GL20;

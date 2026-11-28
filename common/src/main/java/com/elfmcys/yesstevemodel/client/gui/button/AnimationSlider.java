@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.client.gui.button;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.client.gui.ISpecialWidget;
 import com.elfmcys.yesstevemodel.geckolib3.core.AnimatableEntity;
 import com.elfmcys.yesstevemodel.geckolib3.resource.GeckoLibCache;
@@ -17,7 +17,7 @@ import java.text.DecimalFormat;
 
 public class AnimationSlider extends RangedSliderWidget implements ISpecialWidget {
 
-    private static final ResourceLocation ROULETTE_TEXTURE = new ResourceLocation(YesSteveModel.MOD_ID, "texture/roulette.png");
+    private static final ResourceLocation ROULETTE_TEXTURE = new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.RESOURCE_NAMESPACE, "texture/roulette.png");
 
     private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("#.##");
 

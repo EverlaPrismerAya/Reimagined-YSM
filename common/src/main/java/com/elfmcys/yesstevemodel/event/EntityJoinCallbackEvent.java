@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.event;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import dev.architectury.event.EventResult;

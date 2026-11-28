@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.event;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import net.everla.reimaginedysm.compat.touhoulittlemaid.TouhouMaidCompat;
 import com.elfmcys.yesstevemodel.network.NetworkHandler;
 import dev.architectury.event.events.common.LifecycleEvent;

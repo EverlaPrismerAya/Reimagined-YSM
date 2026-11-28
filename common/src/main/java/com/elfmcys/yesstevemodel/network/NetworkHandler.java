@@ -1,11 +1,11 @@
 package com.elfmcys.yesstevemodel.network;
 
-import com.elfmcys.yesstevemodel.RuntimePolicy;
+import net.everla.reimaginedysm.core.RuntimePolicy;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.client.ClientModelManager;
-import com.elfmcys.yesstevemodel.mixin.ConnectionAccessor;
-import com.elfmcys.yesstevemodel.mixin.ServerCommonPacketListenerImplAccessor;
+import net.everla.reimaginedysm.mixin.ConnectionAccessor;
+import net.everla.reimaginedysm.mixin.ServerCommonPacketListenerImplAccessor;
 import com.elfmcys.yesstevemodel.network.message.*;
 import io.netty.util.AttributeKey;
 import net.minecraft.client.Minecraft;
@@ -31,7 +31,7 @@ public final class NetworkHandler {
 
     public static final String VERSION = "2.7.1";
     public static final String OFFICIAL_VERSION = "2.6.0";
-    public static final ResourceLocation OFFICIAL_CHANNEL_ID = new ResourceLocation(YesSteveModel.MOD_ID, "2_6_0");
+    public static final ResourceLocation OFFICIAL_CHANNEL_ID = new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.OFFICIAL_MOD_ID, "2_6_0");
     private static volatile Connection clientProtocolConnection;
 
     public static boolean isOfficialServer() { return isOfficialServer(clientProtocolConnection); }

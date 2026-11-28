@@ -1,8 +1,10 @@
 # Reimagined YSM
 
-Reimagined YSM 是一款基于 Yes Steve Model 的模组，它修改了原版玩家模型，其核心使用 GeckoLib 库，并采用了 Minecraft 基岩版的模型和动画文件。这使得玩家可以根据自己的喜好自定义玩家模型和动画。
+Reimagined YSM 是一款基于 Yes Steve Model 的模组，它重构了YSM的渲染逻辑与模型加载逻辑，提升了其性能并增加了相当多的新功能。
 
-本项目基于OpenYSM，目标是提供一个在多人模式下优化了网络传输方式，并可以纯客户端模式运行的替代品。
+本项目的性能优化逻辑基于OpenYSM。
+
+本项目的目标是使得YSM在多人模式下优化网络传输方式，并使其可以在纯客户端模式运行。
 
 本人不支持，不认可OpenYSM开发组反编译闭源项目并以MIT协议开源的行为。拿着反编译的产物作为把柄要挟别人，这并非开源精神，而是绝对可耻的，对开源精神的亵渎。
 
@@ -11,6 +13,12 @@ Reimagined YSM 是一款基于 Yes Steve Model 的模组，它修改了原版玩
 此项目诞生的原因仅仅是我受不了YSM没有官方支持的纯客户端模式与模型下载传输优化。
 
 Reimagined YSM 仅维护简体中文（zh_cn）和英语（en_us）两种语言。
+
+## 安装
+
+Forge 和 Fabric 的客户端、服务端都必须同时安装 Reimagined YSM 与对应加载器的官方 YSM 2.6.x。
+
+模型目录仍然使用 `config/yes_steve_model`，已有模型、缓存和配置文件无需改名。客户端仍可加入仅安装官方 YSM 2.6.x 的服务端。
 
 ## 改良与兼容性
 

@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.client.upload;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.client.texture.ITextureMap;
 import com.elfmcys.yesstevemodel.util.ResourceCleanupHelper;
 import com.google.common.collect.Queues;
@@ -138,7 +138,7 @@ public class UploadManager {
         }
 
         TextureLocatable(int resolution) {
-            this.resourceLocation = new ResourceLocation(YesSteveModel.MOD_ID, "textures/" + ++textureCounter);
+            this.resourceLocation = new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.RESOURCE_NAMESPACE, "textures/" + ++textureCounter);
             this.resolution = resolution;
             this.registered = false;
         }

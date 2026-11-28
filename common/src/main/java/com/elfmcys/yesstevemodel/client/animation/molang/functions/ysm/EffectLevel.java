@@ -3,7 +3,7 @@ package com.elfmcys.yesstevemodel.client.animation.molang.functions.ysm;
 import com.elfmcys.yesstevemodel.capability.PlayerCapability;
 import com.elfmcys.yesstevemodel.geckolib3.core.molang.context.IContext;
 import com.elfmcys.yesstevemodel.geckolib3.core.molang.funciton.ContextFunction;
-import com.elfmcys.yesstevemodel.mixin.client.ArrowEntityAccessor;
+import net.everla.reimaginedysm.mixin.client.ArrowEntityAccessor;
 import com.elfmcys.yesstevemodel.molang.runtime.ExecutionContext;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;

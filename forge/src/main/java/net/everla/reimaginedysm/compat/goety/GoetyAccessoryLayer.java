@@ -271,7 +271,7 @@ public final class GoetyAccessoryLayer extends GeoLayerRenderer<CustomPlayerEnti
                 spin = ability.getMethod("getSpin");
                 meteoring = ability.getMethod("getMeteoring");
             } catch (ReflectiveOperationException e) {
-                com.elfmcys.yesstevemodel.YesSteveModel.LOGGER.warn("GR halo animation API unavailable", e);
+                net.everla.reimaginedysm.core.YesSteveModel.LOGGER.warn("GR halo animation API unavailable", e);
             }
         }
         poses.translate(0, -12.0 / 16, 5.0 / 16);
@@ -284,7 +284,7 @@ public final class GoetyAccessoryLayer extends GeoLayerRenderer<CustomPlayerEnti
             } catch (ReflectiveOperationException | RuntimeException e) {
                 spin = null;
                 meteoring = null;
-                com.elfmcys.yesstevemodel.YesSteveModel.LOGGER.warn("GR halo animation API failed", e);
+                net.everla.reimaginedysm.core.YesSteveModel.LOGGER.warn("GR halo animation API failed", e);
             }
         }
         var haloTexture = new ResourceLocation("goety_revelation", "textures/entity/player/" + texture + ".png");

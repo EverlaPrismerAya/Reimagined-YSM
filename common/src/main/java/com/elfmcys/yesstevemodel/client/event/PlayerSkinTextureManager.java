@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.client.event;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.event.api.SpecialPlayerRenderEvent;
 import com.mojang.authlib.minecraft.MinecraftProfileTexture;
 import dev.architectury.event.EventResult;

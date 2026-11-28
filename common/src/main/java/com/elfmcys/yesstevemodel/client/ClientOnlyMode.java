@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.client;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.config.GeneralConfig;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;

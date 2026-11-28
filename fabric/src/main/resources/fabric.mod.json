@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "yes_steve_model",
+  "id": "rysm",
   "version": "${version}",
   "name": "Reimagined YSM",
-  "description": "A Optimized version of YSM 2.6.5 that Added some QOL features.",
+  "description": "A mod that adds JS scripting support, physics simulation, additional features, and modern performance optimizations to YSM.",
   "authors": [
     "Original: YS Group, TartaricAcid, TomatoPuddin, AryochiL. Modify: EverlaPrismer Aya"
   ],
@@ -25,13 +25,14 @@
     ]
   },
   "mixins": [
-    "yes_steve_model.mixins.json",
-    "yes_steve_model_fabric.mixins.json"
+    "rysm.mixins.json",
+    "rysm_fabric.mixins.json"
   ],
   "depends": {
     "fabricloader": ">=0.16.10",
     "minecraft": "~1.20.1",
-    "java": ">=17"
+    "java": ">=17",
+    "yes_steve_model": ">=2.6.0 <2.7.0"
   },
   "suggests": {
     "another-mod": "*"
@@ -44,5 +45,8 @@
       "yes_steve_model:projectile_model",
       "yes_steve_model:vehicle_model"
     ]
+  },
+  "languageAdapters": {
+    "rysm_takeover": "net.everla.ysmCompactLayer.fabric.OfficialYsmLanguageAdapter"
   }
 }

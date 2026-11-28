@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.client.compat.create;
 
-import com.elfmcys.yesstevemodel.forge.mixin.client.create.PlayerSkyhookRendererAccessor;
+import net.everla.reimaginedysm.forge.mixin.client.create.PlayerSkyhookRendererAccessor;
 import net.minecraft.world.entity.player.Player;
 
 public class SkyHookHelper {

@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.fabric.client;
 
-import com.elfmcys.yesstevemodel.RuntimePolicy;
+import net.everla.reimaginedysm.core.RuntimePolicy;
 
 import com.elfmcys.yesstevemodel.client.ClientModelManager;
 import com.elfmcys.yesstevemodel.client.renderer.AnimationDebugOverlay;

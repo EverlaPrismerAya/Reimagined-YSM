@@ -1,7 +1,7 @@
 package com.elfmcys.yesstevemodel.client.compat.top;
 
 import com.elfmcys.yesstevemodel.model.ServerModelManager;
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.forge.capability.ModelInfoCapabilityProvider;
 import com.elfmcys.yesstevemodel.forge.capability.VehicleModelCapabilityProvider;
 import com.elfmcys.yesstevemodel.geckolib3.core.molang.util.StringPool;
@@ -32,7 +32,7 @@ public final class TheOneProbeEntityProvider implements Function<ITheOneProbe, V
 
     private static class ModelInfoEntityProvider implements IProbeInfoEntityProvider {
 
-        private static final String PROVIDER_ID = new ResourceLocation(YesSteveModel.MOD_ID, "model_info").toString();
+        private static final String PROVIDER_ID = new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.RESOURCE_NAMESPACE, "model_info").toString();
 
         private ModelInfoEntityProvider() {
         }

@@ -1,13 +1,13 @@
 package com.elfmcys.yesstevemodel.model;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.capability.AuthModelsCapability;
 import com.elfmcys.yesstevemodel.capability.ModelInfoCapability;
 import com.elfmcys.yesstevemodel.client.ExportResult;
 import com.elfmcys.yesstevemodel.config.CommonConfig;
 import com.elfmcys.yesstevemodel.config.ModelLoadingMode.Request;
-import com.elfmcys.yesstevemodel.mixin.ConnectionAccessor;
-import com.elfmcys.yesstevemodel.mixin.ServerCommonPacketListenerImplAccessor;
+import net.everla.reimaginedysm.mixin.ConnectionAccessor;
+import net.everla.reimaginedysm.mixin.ServerCommonPacketListenerImplAccessor;
 import com.elfmcys.yesstevemodel.model.format.ServerAnimationInfo;
 import com.elfmcys.yesstevemodel.model.format.ServerModelData;
 import com.elfmcys.yesstevemodel.model.format.ServerModelInfo;
@@ -74,7 +74,7 @@ public final class ServerModelManager {
     /**
      * 配置相关文件夹
      */
-    public static final Path FOLDER = Paths.get("config", YesSteveModel.MOD_ID);
+    public static final Path FOLDER = net.everla.ysmCompactLayer.YsmIdentity.MODEL_DIRECTORY;
 
     /**
      * 自定义模型所放置的文件夹
@@ -310,51 +310,7 @@ public final class ServerModelManager {
 
     private static void extractBuiltinModels() {
         try {
-            Path assetsBuiltin = Platform.getMod(YesSteveModel.MOD_ID).findResource("assets", YesSteveModel.MOD_ID, "builtin").orElse(null);
-
-            if (assetsBuiltin == null || !Files.isDirectory(assetsBuiltin)) return;
-
-            Set<String> sourcePaths = new HashSet<>();
-            try (Stream<Path> walker = Files.walk(assetsBuiltin)) {
-                walker.forEach(src -> {
-                    try {
-                        Path relative = assetsBuiltin.relativize(src);
-                        sourcePaths.add(relative.toString().replace('\\', '/'));
-                        Path dest = ServerModelManager.BUILT.resolve(relative.toString());
-                        if (Files.isDirectory(src)) {
-                            Files.createDirectories(dest);
-                        } else {
-                            Files.createDirectories(dest.getParent());
-                            boolean unchanged = Files.isRegularFile(dest)
-                                    && Files.size(src) == Files.size(dest)
-                                    && Files.getLastModifiedTime(src).toMillis() == Files.getLastModifiedTime(dest).toMillis();
-                            if (!unchanged) {
-                                var modified = Files.getLastModifiedTime(src);
-                                Files.copy(src, dest, StandardCopyOption.REPLACE_EXISTING);
-                                try {
-                                    Files.setLastModifiedTime(dest, modified);
-                                } catch (IOException ignored) {
-                                }
-                            }
-                        }
-                    } catch (IOException e) {
-                        YesSteveModel.LOGGER.warn("Failed to extract builtin: " + src.getFileName(), e);
-                    }
-                });
-            }
-            try (Stream<Path> walker = Files.walk(BUILT)) {
-                walker.sorted(Comparator.reverseOrder()).forEach(dest -> {
-                    if (dest.equals(BUILT) || dest.equals(BUILT.resolve("notice.txt"))) return;
-                    String relative = BUILT.relativize(dest).toString().replace('\\', '/');
-                    if (!sourcePaths.contains(relative)) {
-                        try {
-                            Files.deleteIfExists(dest);
-                        } catch (IOException e) {
-                            YesSteveModel.LOGGER.warn("Failed to remove stale builtin: " + dest.getFileName(), e);
-                        }
-                    }
-                });
-            }
+            net.everla.ysmCompactLayer.OfficialYsmResources.extractBuiltin(BUILT);
         } catch (Exception e) {
             YesSteveModel.LOGGER.error("Failed to extract builtin models", e);
         }

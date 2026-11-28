@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.client.renderer;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import dev.architectury.registry.ReloadListenerRegistry;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
@@ -30,7 +30,7 @@ public class RendererManager {
             return;
         }
         ResourceManagerReloadListener listener = resourceManager -> resetRenderers();
-        ReloadListenerRegistry.register(PackType.CLIENT_RESOURCES, listener, new ResourceLocation(YesSteveModel.MOD_ID, "renderer_manager"));
+        ReloadListenerRegistry.register(PackType.CLIENT_RESOURCES, listener, new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.RESOURCE_NAMESPACE, "renderer_manager"));
     }
 
     private static void resetRenderers() {

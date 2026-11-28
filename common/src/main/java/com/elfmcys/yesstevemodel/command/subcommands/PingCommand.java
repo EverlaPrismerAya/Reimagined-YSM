@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.command.subcommands;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.network.NetworkHandler;
 import com.elfmcys.yesstevemodel.network.message.S2CVersionCheckPacket;
 import com.mojang.brigadier.Command;

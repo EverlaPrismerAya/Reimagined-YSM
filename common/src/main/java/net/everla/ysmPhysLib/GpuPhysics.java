@@ -1,6 +1,6 @@
 package net.everla.ysmPhysLib;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.config.ClientConfigScope;
 import com.elfmcys.yesstevemodel.config.GeneralConfig;
 import com.elfmcys.yesstevemodel.geckolib3.geo.animated.AnimatedGeoModel;

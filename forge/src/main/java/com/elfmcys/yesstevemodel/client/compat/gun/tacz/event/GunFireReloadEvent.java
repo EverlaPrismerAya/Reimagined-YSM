@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.client.compat.gun.tacz.event;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.forge.capability.PlayerCapabilityProvider;
 import com.elfmcys.yesstevemodel.client.compat.touhoulittlemaid.TouhouLittleMaidCompat;
 import com.tacz.guns.api.event.common.GunFireEvent;

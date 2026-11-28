@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.audio;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.PooledByteBufAllocator;
 import org.jetbrains.annotations.NotNull;

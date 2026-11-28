@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.model;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.resource.pojo.RawYsmModel;
 import java.nio.file.*;
 import java.util.*;

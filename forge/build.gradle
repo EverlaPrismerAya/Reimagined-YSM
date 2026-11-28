@@ -4,8 +4,8 @@ plugins {
 
 loom {
     forge {
-        mixinConfig "yes_steve_model.mixins.json"
-        mixinConfig "yes_steve_model_forge.mixins.json"
+        mixinConfig "rysm.mixins.json"
+        mixinConfig "rysm_forge.mixins.json"
     }
 }
 
@@ -113,3 +113,9 @@ shadowJar {
 remapJar {
     input.set shadowJar.archiveFile
 }
+
+// Official YSM is the sole source of builtin models.
+tasks.withType(ProcessResources).configureEach {
+    exclude 'assets/yes_steve_model/builtin/**'
+}
+tasks.named('shadowJar') { exclude 'assets/yes_steve_model/builtin/**' }

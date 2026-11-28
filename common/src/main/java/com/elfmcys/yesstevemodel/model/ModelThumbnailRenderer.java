@@ -230,7 +230,7 @@ public final class ModelThumbnailRenderer {
             try { return evaluator.evalAll(engine.parse(checkedExpression(script)),true); }
             catch(com.elfmcys.yesstevemodel.molang.parser.ParseException ex) {
                 // The live mapper also ignores invalid legacy timeline statements (for example "[;").
-                com.elfmcys.yesstevemodel.YesSteveModel.LOGGER.debug("Invalid thumbnail timeline statement: {}",script,ex);
+                net.everla.reimaginedysm.core.YesSteveModel.LOGGER.debug("Invalid thumbnail timeline statement: {}",script,ex);
                 return 0f;
             }
             finally { calls--; }
@@ -327,13 +327,13 @@ public final class ModelThumbnailRenderer {
         try {
             float number = value instanceof Number n ? n.floatValue() : ValueConversions.asFloat(evaluator.evalAll(engine.parse(checkedExpression(value.toString())), true));
             if (!Float.isFinite(number)) {
-                com.elfmcys.yesstevemodel.YesSteveModel.LOGGER.debug("Non-finite thumbnail channel: {}",value);
+                net.everla.reimaginedysm.core.YesSteveModel.LOGGER.debug("Non-finite thumbnail channel: {}",value);
                 return fallback;
             }
             return number;
         } catch (com.elfmcys.yesstevemodel.molang.parser.ParseException ex) {
             // Match YSMClientMapper.parse: a malformed legacy channel does not discard the model.
-            com.elfmcys.yesstevemodel.YesSteveModel.LOGGER.debug("Invalid thumbnail channel: {}",value,ex);
+            net.everla.reimaginedysm.core.YesSteveModel.LOGGER.debug("Invalid thumbnail channel: {}",value,ex);
             return fallback;
         } catch (Exception ex) { throw new IOException("Cannot evaluate preview animation: " + value, ex); }
     }

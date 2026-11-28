@@ -1,8 +1,8 @@
 package com.elfmcys.yesstevemodel.fabric;
 
-import com.elfmcys.yesstevemodel.RuntimePolicy;
+import net.everla.reimaginedysm.core.RuntimePolicy;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.capability.fabric.AuthModelsComponent;
 import com.elfmcys.yesstevemodel.capability.fabric.ModelInfoComponent;
 import com.elfmcys.yesstevemodel.capability.fabric.ProjectileModelComponent;
@@ -20,27 +20,27 @@ import net.minecraft.world.entity.projectile.Projectile;
 public final class YsmComponents implements EntityComponentInitializer {
 
     public static final ComponentKey<StarModelsComponent> STAR_MODELS = RuntimePolicy.isDisabled() ? null : ComponentRegistryV3.INSTANCE.getOrCreate(
-            new ResourceLocation(YesSteveModel.MOD_ID, "star_models"),
+            new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.DATA_NAMESPACE, "star_models"),
             StarModelsComponent.class
     );
 
     public static final ComponentKey<AuthModelsComponent> AUTH_MODELS = RuntimePolicy.isDisabled() ? null : ComponentRegistryV3.INSTANCE.getOrCreate(
-            new ResourceLocation(YesSteveModel.MOD_ID, "auth_models"),
+            new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.DATA_NAMESPACE, "auth_models"),
             AuthModelsComponent.class
     );
 
     public static final ComponentKey<ModelInfoComponent> MODEL_INFO = RuntimePolicy.isDisabled() ? null : ComponentRegistryV3.INSTANCE.getOrCreate(
-            new ResourceLocation(YesSteveModel.MOD_ID, "model_info"),
+            new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.DATA_NAMESPACE, "model_info"),
             ModelInfoComponent.class
     );
 
     public static final ComponentKey<ProjectileModelComponent> PROJECTILE_MODEL = RuntimePolicy.isDisabled() ? null : ComponentRegistryV3.INSTANCE.getOrCreate(
-            new ResourceLocation(YesSteveModel.MOD_ID, "projectile_model"),
+            new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.DATA_NAMESPACE, "projectile_model"),
             ProjectileModelComponent.class
     );
 
     public static final ComponentKey<VehicleModelComponent> VEHICLE_MODEL = RuntimePolicy.isDisabled() ? null : ComponentRegistryV3.INSTANCE.getOrCreate(
-            new ResourceLocation(YesSteveModel.MOD_ID, "vehicle_model"),
+            new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.DATA_NAMESPACE, "vehicle_model"),
             VehicleModelComponent.class
     );
 

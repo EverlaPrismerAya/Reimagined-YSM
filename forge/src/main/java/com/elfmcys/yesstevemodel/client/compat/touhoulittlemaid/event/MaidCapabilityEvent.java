@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.client.compat.touhoulittlemaid.event;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.client.compat.touhoulittlemaid.capability.MaidCapabilityProvider;
 import com.github.tartaricacid.touhoulittlemaid.entity.passive.EntityMaid;
 import net.minecraft.resources.ResourceLocation;
@@ -14,7 +14,7 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 @OnlyIn(Dist.CLIENT)
 public final class MaidCapabilityEvent {
 
-    private static final ResourceLocation CAPABILITY_KEY = new ResourceLocation(YesSteveModel.MOD_ID, "ysm_maid");
+    private static final ResourceLocation CAPABILITY_KEY = new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.DATA_NAMESPACE, "ysm_maid");
 
     @SubscribeEvent
     public void onAttachCapabilities(AttachCapabilitiesEvent<Entity> event) {

@@ -1,8 +1,8 @@
 package com.elfmcys.yesstevemodel.forge.event;
 
-import com.elfmcys.yesstevemodel.RuntimePolicy;
+import net.everla.reimaginedysm.core.RuntimePolicy;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.client.event.MobEffectEvent;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraftforge.event.entity.living.MobEffectEvent.Added;

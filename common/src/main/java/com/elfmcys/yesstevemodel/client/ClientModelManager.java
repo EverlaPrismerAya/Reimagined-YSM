@@ -1,7 +1,7 @@
 package com.elfmcys.yesstevemodel.client;
 
-import com.elfmcys.yesstevemodel.NativeLibLoader;
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.NativeLibLoader;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.capability.PlayerCapability;
 import com.elfmcys.yesstevemodel.client.gui.IGuiWidget;
 import com.elfmcys.yesstevemodel.client.gui.metadata.ModelDisplayAssets;
@@ -165,25 +165,7 @@ public class ClientModelManager {
         GeoModel.initSIMD();
 
         try {
-            String resourcePath = "/assets/yes_steve_model/builtin/default";
-            URL resourceUrl = YesSteveModel.class.getResource(resourcePath);
-            if (resourceUrl == null) {
-                YesSteveModel.LOGGER.error("[YSM] Builtin default model not found in classpath: " + resourcePath);
-                return;
-            }
-            URI uri = resourceUrl.toURI();
-            Path defaultPath;
-            FileSystem jarFs = null;
-            if ("jar".equals(uri.getScheme())) {
-                try {
-                    jarFs = FileSystems.getFileSystem(uri);
-                } catch (FileSystemNotFoundException e) {
-                    jarFs = FileSystems.newFileSystem(uri, Collections.emptyMap());
-                }
-                defaultPath = jarFs.getPath(resourcePath);
-            } else {
-                defaultPath = Paths.get(uri);
-            }
+            Path defaultPath = net.everla.ysmCompactLayer.OfficialYsmResources.builtinDirectory().resolve("default");
 
             try (YSMFolderDeserializer deserializer = new YSMFolderDeserializer(defaultPath)) {
                 RawYsmModel rawModel = deserializer.deserialize();

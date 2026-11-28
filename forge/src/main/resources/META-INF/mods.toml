@@ -4,33 +4,40 @@ loaderVersion = "[47,)"
 license = "MIT"
 
 [[mods]]
-modId = "yes_steve_model"
+modId = "rysm"
 version = "${version}"
 displayName = "Reimagined YSM"
 authors = "Original: YS Group, TartaricAcid, TomatoPuddin, AryochiL. Modify: EverlaPrismer Aya"
-description = "A Optimized version of YSM 2.6.5 that Added some QOL features."
+description = "A mod that adds JS scripting support, physics simulation, additional features, and modern performance optimizations to YSM."
 
 
 logoFile = "yesstevemodel.png"
 
-[[dependencies.yes_steve_model]]
+[[dependencies.rysm]]
 modId = "forge"
 mandatory = true
 versionRange = "[47,)"
 ordering = "NONE"
 side = "BOTH"
 
-[[dependencies.yes_steve_model]]
+[[dependencies.rysm]]
 modId = "minecraft"
 mandatory = true
 versionRange = "[1.20.1,)"
 ordering = "NONE"
 side = "BOTH"
 
-[[dependencies.yes_steve_model]]
+[[dependencies.rysm]]
 modId = "architectury"
 mandatory = true
 versionRange = "[9.2,)"
 ordering = "AFTER"
 side = "BOTH"
 
+
+[[dependencies.rysm]]
+modId = "yes_steve_model"
+mandatory = true
+versionRange = "[2.6,2.7)"
+ordering = "AFTER"
+side = "BOTH"

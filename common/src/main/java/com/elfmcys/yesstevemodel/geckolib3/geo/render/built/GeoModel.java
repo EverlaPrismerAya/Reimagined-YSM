@@ -1,6 +1,6 @@
 package com.elfmcys.yesstevemodel.geckolib3.geo.render.built;
 
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.geckolib3.core.molang.util.StringPool;
 import com.elfmcys.yesstevemodel.geckolib3.geo.animated.AnimatedGeoModel;
 import com.elfmcys.yesstevemodel.resource.models.GeometryDescription;
@@ -176,7 +176,7 @@ public class GeoModel {
             String modeName = null;
 
 
-            String classPath = "/com/elfmcys/yesstevemodel/mixin/client/BufferBuilderMixin.class";
+            String classPath = "/net/everla/reimaginedysm/mixin/client/BufferBuilderMixin.class";
             InputStream is = GeoModel.class.getResourceAsStream(classPath);
 
             if (is == null) {

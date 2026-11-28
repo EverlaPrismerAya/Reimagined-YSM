@@ -3,14 +3,14 @@ package com.elfmcys.yesstevemodel.client.gui;
 import com.elfmcys.yesstevemodel.client.gui.button.AuthorButton;
 import com.elfmcys.yesstevemodel.client.model.ModelAssembly;
 import com.elfmcys.yesstevemodel.client.texture.OuterFileTexture;
-import com.elfmcys.yesstevemodel.YesSteveModel;
+import net.everla.reimaginedysm.core.YesSteveModel;
 import com.elfmcys.yesstevemodel.client.upload.UploadManager;
 import com.elfmcys.yesstevemodel.resource.models.AuthorInfo;
 import com.elfmcys.yesstevemodel.resource.models.Metadata;
 import com.elfmcys.yesstevemodel.client.gui.button.FlatColorButton;
 import com.elfmcys.yesstevemodel.model.format.ServerModelInfo;
 import com.elfmcys.yesstevemodel.client.upload.IResourceLocatable;
-import com.elfmcys.yesstevemodel.mixin.client.ScreenAccessor;
+import net.everla.reimaginedysm.mixin.client.ScreenAccessor;
 import com.google.common.collect.ImmutableMap;
 import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
@@ -28,7 +28,7 @@ import java.util.*;
 
 public class ModelInfoScreen extends Screen {
 
-    private static final ResourceLocation DEFAULT_AVATAR = new ResourceLocation(YesSteveModel.MOD_ID, "texture/default_avatar.png");
+    private static final ResourceLocation DEFAULT_AVATAR = new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.RESOURCE_NAMESPACE, "texture/default_avatar.png");
 
     private static final Map<String, Component> URL_LABELS = ImmutableMap.of("home", Component.translatable("gui.yes_steve_model.url.home"), "donate", Component.translatable("gui.yes_steve_model.url.donate"));
 
@@ -64,7 +64,7 @@ public class ModelInfoScreen extends Screen {
         for (int i = 0; i < authorInfo.size(); i++) {
             OuterFileTexture avatar = avatars.get(authorInfo.get(i).getName());
             if (avatar != null) {
-                textureManager.register(new ResourceLocation(YesSteveModel.MOD_ID, "avatars/" + i), avatar);
+                textureManager.register(new ResourceLocation(net.everla.ysmCompactLayer.YsmIdentity.RESOURCE_NAMESPACE, "avatars/" + i), avatar);
                 this.textureList.add(UploadManager.getOrCreateLocatable(avatar, true));
             } else {
                 this.textureList.add(null);

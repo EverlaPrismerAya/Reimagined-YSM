@@ -33,7 +33,7 @@ public final class ScriptTransfer {
         public static void handle(Chunk p,PacketContext c){if(c.isClientSide())c.enqueueWork(()->receive(p));}
     }
     public static void send(ServerPlayer player,String hash) throws IOException {
-        var connection=CAPABLE.get(player.getUUID());if(connection==null||!connection.isConnected()||connection!=((com.elfmcys.yesstevemodel.mixin.ServerCommonPacketListenerImplAccessor)player.connection).ysm$getConnection())return;
+        var connection=CAPABLE.get(player.getUUID());if(connection==null||!connection.isConnected()||connection!=((net.everla.reimaginedysm.mixin.ServerCommonPacketListenerImplAccessor)player.connection).ysm$getConnection())return;
         ScriptBundle bundle=ScriptResources.get(hash);if(bundle==null){NetworkHandler.sendToClientPlayer(new Chunk(hash,0,0,new byte[0]),player);return;}byte[] archive=bundle.archive();
         for(int offset=0;offset<archive.length;offset+=24576) {
             NetworkHandler.sendToClientPlayer(new Chunk(hash,archive.length,offset,Arrays.copyOfRange(archive,offset,Math.min(offset+24576,archive.length))),player);
