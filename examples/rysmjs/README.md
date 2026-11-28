@@ -43,7 +43,7 @@ Rysm.model('group_modifier', event => {
 });
 ```
 
-更多参数和 `game` 字段见 [主 README](../../README.md#game-速查)。
+更多参数和 `game` 字段见 [Wiki 脚本速查](../../wiki/scripting.md#game-速查)。
 
 ## 使用复杂算法示例
 
@@ -57,7 +57,7 @@ Rysm.model('group_modifier', event => {
 | `rysmjs.flight_ready` | 组合属性和生命值条件，返回 `0` 或 `1` |
 | `rysmjs.smooth_flying_speed` | 每 tick 向目标速度靠近 `20%` |
 
-将示例中的属性 ID 改为实际值。按 F10 可将当前值和基础值输出到聊天栏。详细写法见 [玩家属性](../../README.md#读取玩家属性)。
+将示例中的属性 ID 改为实际值。按 F10 可将当前值和基础值输出到聊天栏。详细写法见 [玩家属性](../../wiki/scripting.md#读取玩家属性)。
 
 ## 查看模型效果
 

@@ -87,7 +87,7 @@ Rysm.model('group_modifier', event => {
 
 切换项目后，旧窗口保留草稿并停止写入，可导出草稿。插件重载时将未保存草稿保存在原项目属性中。手写脚本与属性表单独立，不在 Blockbench 内运行。
 
-完整 API 与示例见 [RYSM JS 文档](../docs/rysmjs.md) 和 [中文注释示例](../examples/rysmjs/README.md)。
+完整 API 与示例见 [Wiki 脚本说明](../wiki/scripting.md) 和 [中文注释示例](../examples/rysmjs/README.md)。
 
 ## 编辑模式静态辅助
 
